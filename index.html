@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Yard Stock">
+<title>Yard Stock</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="navheader">
+  <div class="navheader-top">
+    <div>
+      <div class="navtitle" id="navTitle">Stock</div>
+      <div class="navsub" id="navSub"></div>
+    </div>
+    <button class="nav-me" id="navMe" type="button"></button>
+  </div>
+</div>
+
+<div class="wrap" id="screenContent"></div>
+
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet"></div>
+
+<button class="fab" id="fabAdd" type="button" aria-label="Add"></button>
+<div class="tabbar" id="tabbar"></div>
+<div class="toast" id="toast"></div>
+
+<input type="file" id="photoInput" accept="image/*" capture="environment" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
+
+<script src="config.js"></script>
+<script src="db.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

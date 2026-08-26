@@ -1,0 +1,403 @@
+/* =========================================================
+   Yard Stock — data layer
+   ---------------------------------------------------------
+   Two interchangeable back ends behind one API:
+
+     • 'supabase' — live shared data over the PostgREST API.
+                    No SDK, no CDN: plain fetch calls.
+     • 'local'    — IndexedDB on this device only. Used
+                    automatically when config.js has no keys,
+                    so the app is usable before you sign up.
+
+   Every read is mirrored into IndexedDB, so if the phone drops
+   off the network the app still shows the last known stock
+   (read-only) instead of an empty screen.
+   ========================================================= */
+(function () {
+  'use strict';
+
+  const CFG = window.CONFIG || {};
+  const HAS_SUPABASE = !!(CFG.SUPABASE_URL && CFG.SUPABASE_ANON_KEY);
+
+  /* ---------------- IndexedDB key/value store ---------------- */
+  const IDB_NAME = 'yardstock';
+  const IDB_STORE = 'kv';
+  const IDB_TIMEOUT = 4000;
+  let idbPromise = null;
+  let memFallback = null;   // used if IndexedDB is unavailable or wedged
+
+  /* Some browsers (notably Safari in private mode) can leave an IndexedDB
+     request pending forever instead of erroring. Never let that hang the app:
+     every call races a timeout and falls back to an in-memory map, so the
+     worst case is "this session does not remember", not a frozen spinner. */
+  function timeboxed(promise, ms, fallback) {
+    return Promise.race([
+      promise,
+      new Promise(resolve => setTimeout(() => resolve(fallback), ms))
+    ]);
+  }
+  function memory() {
+    if (!memFallback) memFallback = new Map();
+    return memFallback;
+  }
+
+  function idb() {
+    if (idbPromise) return idbPromise;
+    idbPromise = timeboxed(new Promise((resolve, reject) => {
+      if (!self.indexedDB) { reject(new Error('no indexedDB')); return; }
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => reject(new Error('indexedDB blocked'));
+    }), IDB_TIMEOUT, null).catch(() => null);
+    return idbPromise;
+  }
+
+  async function kvGet(key) {
+    try {
+      const db = await idb();
+      if (!db) return memory().get(key);
+      return await timeboxed(new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readonly');
+        const req = tx.objectStore(IDB_STORE).get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      }), IDB_TIMEOUT, undefined);
+    } catch (e) { return memory().get(key); }
+  }
+
+  async function kvSet(key, value) {
+    try {
+      const db = await idb();
+      if (!db) { memory().set(key, value); return false; }
+      return await timeboxed(new Promise((resolve, reject) => {
+        const tx = db.transaction(IDB_STORE, 'readwrite');
+        tx.objectStore(IDB_STORE).put(value, key);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error);
+      }), IDB_TIMEOUT, false);
+    } catch (e) { memory().set(key, value); return false; }
+  }
+
+  /** true when persistence is genuinely working */
+  async function storageOk() { return !!(await idb()); }
+
+  /* ---------------- shared helpers ---------------- */
+  function uuid() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+  }
+  function nowIso() { return new Date().toISOString(); }
+  let localSeq = 0;
+
+  class OfflineError extends Error {
+    constructor(msg) { super(msg || 'No connection'); this.name = 'OfflineError'; this.offline = true; }
+  }
+
+  /* =========================================================
+     LOCAL ADAPTER
+     ========================================================= */
+  const Local = {
+    mode: 'local',
+    cache: { products: [], movements: [], people: [] },
+    ready: null,
+
+    /* Load all three keys, then assign in one go. Reading them one await at a
+       time left a window where a write could land between assignments and then
+       be overwritten by the next stale read. Every method below waits on this,
+       so nothing can touch the cache before it is filled. */
+    init() {
+      if (!this.ready) {
+        this.ready = (async () => {
+          const [products, movements, people] = await Promise.all([
+            kvGet('local:products'), kvGet('local:movements'), kvGet('local:people')
+          ]);
+          this.cache.products  = products  || [];
+          this.cache.movements = movements || [];
+          this.cache.people    = people    || [];
+        })();
+      }
+      return this.ready;
+    },
+    async persist(what) { await kvSet('local:' + what, this.cache[what]); },
+
+    async listProducts() { await this.init(); return this.cache.products.filter(p => !p.archived); },
+    async listMovements(limit) {
+      await this.init();
+      return this.cache.movements
+        .slice()
+        // seq breaks ties: two movements can land in the same millisecond and
+        // the log must still read newest-first.
+        .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '') || (b.seq || 0) - (a.seq || 0))
+        .slice(0, limit || 300);
+    },
+    async listPeople() { await this.init(); return this.cache.people.filter(p => p.active !== false); },
+
+    async createProduct(p) {
+      await this.init();
+      const row = Object.assign({
+        id: uuid(), qty: 0, min_qty: 0, archived: false,
+        created_at: nowIso(), updated_at: nowIso()
+      }, p);
+      this.cache.products.push(row);
+      await this.persist('products');
+      if (Number(row.qty) !== 0) {
+        await this.applyMovement({
+          productId: row.id, delta: Number(row.qty), reason: 'in',
+          person: p.__person || '', note: 'Opening count', _skipQty: true
+        });
+      }
+      return row;
+    },
+    async updateProduct(id, patch) {
+      await this.init();
+      const row = this.cache.products.find(p => p.id === id);
+      if (!row) throw new Error('Product not found');
+      Object.assign(row, patch, { updated_at: nowIso() });
+      await this.persist('products');
+      return row;
+    },
+    async deleteProduct(id) {
+      await this.init();
+      this.cache.products = this.cache.products.filter(p => p.id !== id);
+      this.cache.movements = this.cache.movements.filter(m => m.product_id !== id);
+      await this.persist('products');
+      await this.persist('movements');
+      return true;
+    },
+    async applyMovement({ productId, delta, reason, person, note, _skipQty }) {
+      await this.init();
+      const row = this.cache.products.find(p => p.id === productId);
+      if (!row) throw new Error('Product not found');
+      if (!_skipQty) row.qty = Number(row.qty) + Number(delta);
+      row.updated_at = nowIso();
+      this.cache.movements.push({
+        id: uuid(), product_id: productId, delta: Number(delta), qty_after: Number(row.qty),
+        reason: reason || 'out', person: person || '', note: note || '',
+        product_name: row.name, created_at: nowIso(), seq: ++localSeq
+      });
+      await this.persist('products');
+      await this.persist('movements');
+      return row;
+    },
+    async addPerson(name) {
+      await this.init();
+      const row = { id: uuid(), name, active: true, created_at: nowIso() };
+      this.cache.people.push(row);
+      await this.persist('people');
+      return row;
+    },
+    async removePerson(id) {
+      await this.init();
+      this.cache.people = this.cache.people.filter(p => p.id !== id);
+      await this.persist('people');
+      return true;
+    },
+    async uploadPhoto(blob) {
+      // Local mode keeps the image inline as a data URL.
+      return await new Promise((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result);
+        fr.onerror = () => reject(fr.error);
+        fr.readAsDataURL(blob);
+      });
+    }
+  };
+
+  /* =========================================================
+     SUPABASE ADAPTER (PostgREST + Storage over fetch)
+     ========================================================= */
+  const Supa = {
+    mode: 'supabase',
+    base: String(CFG.SUPABASE_URL || '').replace(/\/+$/, ''),
+    key: CFG.SUPABASE_ANON_KEY || '',
+
+    headers(extra) {
+      return Object.assign({
+        'apikey': this.key,
+        'Authorization': 'Bearer ' + this.key,
+        'Content-Type': 'application/json'
+      }, extra || {});
+    },
+    async rest(path, opts) {
+      opts = opts || {};
+      let res;
+      try {
+        res = await fetch(this.base + '/rest/v1/' + path, {
+          method: opts.method || 'GET',
+          headers: this.headers(opts.headers),
+          body: opts.body ? JSON.stringify(opts.body) : undefined
+        });
+      } catch (e) {
+        throw new OfflineError('Could not reach the server');
+      }
+      if (!res.ok) {
+        let detail = '';
+        try { const j = await res.json(); detail = j.message || j.hint || j.error || ''; } catch (e) { /* ignore */ }
+        throw new Error(detail || ('Server error ' + res.status));
+      }
+      if (res.status === 204) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    },
+
+    async init() { /* nothing to warm up */ },
+
+    async listProducts() {
+      return await this.rest('products?select=*&archived=eq.false&order=name.asc');
+    },
+    async listMovements(limit) {
+      return await this.rest('movements?select=*,products(name,unit)&order=created_at.desc&limit=' + (limit || 300));
+    },
+    async listPeople() {
+      return await this.rest('people?select=*&active=eq.true&order=name.asc');
+    },
+    async createProduct(p) {
+      const person = p.__person || '';
+      const opening = Number(p.qty) || 0;
+      const body = Object.assign({}, p);
+      delete body.__person;
+      body.qty = 0;
+      const rows = await this.rest('products', {
+        method: 'POST', body: body, headers: { 'Prefer': 'return=representation' }
+      });
+      const row = rows[0];
+      if (opening !== 0) {
+        return await this.applyMovement({
+          productId: row.id, delta: opening, reason: 'in', person, note: 'Opening count'
+        });
+      }
+      return row;
+    },
+    async updateProduct(id, patch) {
+      const rows = await this.rest('products?id=eq.' + id, {
+        method: 'PATCH', body: Object.assign({}, patch, { updated_at: nowIso() }),
+        headers: { 'Prefer': 'return=representation' }
+      });
+      return rows && rows[0];
+    },
+    async deleteProduct(id) {
+      // Soft delete keeps the movement history intact.
+      await this.rest('products?id=eq.' + id, {
+        method: 'PATCH', body: { archived: true, updated_at: nowIso() }
+      });
+      return true;
+    },
+    async applyMovement({ productId, delta, reason, person, note }) {
+      // Single atomic call: adjusts qty AND writes the log line.
+      return await this.rest('rpc/apply_movement', {
+        method: 'POST',
+        body: {
+          p_product: productId, p_delta: Number(delta),
+          p_reason: reason || 'out', p_person: person || '', p_note: note || ''
+        }
+      });
+    },
+    async addPerson(name) {
+      const rows = await this.rest('people', {
+        method: 'POST', body: { name: name }, headers: { 'Prefer': 'return=representation' }
+      });
+      return rows[0];
+    },
+    async removePerson(id) {
+      await this.rest('people?id=eq.' + id, { method: 'PATCH', body: { active: false } });
+      return true;
+    },
+    async uploadPhoto(blob, productId) {
+      const bucket = CFG.PHOTO_BUCKET || 'product-photos';
+      const path = (productId || uuid()) + '/' + Date.now() + '.jpg';
+      let res;
+      try {
+        res = await fetch(this.base + '/storage/v1/object/' + bucket + '/' + path, {
+          method: 'POST',
+          headers: {
+            'apikey': this.key,
+            'Authorization': 'Bearer ' + this.key,
+            'Content-Type': 'image/jpeg',
+            'x-upsert': 'true'
+          },
+          body: blob
+        });
+      } catch (e) {
+        throw new OfflineError('Could not upload the photo');
+      }
+      if (!res.ok) {
+        let detail = '';
+        try { const j = await res.json(); detail = j.message || j.error || ''; } catch (e) { /* ignore */ }
+        throw new Error(detail || 'Photo upload failed (' + res.status + ')');
+      }
+      return this.base + '/storage/v1/object/public/' + bucket + '/' + path;
+    }
+  };
+
+  /* =========================================================
+     PUBLIC FACADE — caching + offline fallback
+     ========================================================= */
+  const impl = HAS_SUPABASE ? Supa : Local;
+
+  const DB = {
+    mode: impl.mode,
+    online: true,
+    lastSync: null,
+    /** true when the last read came from the offline cache */
+    stale: false,
+
+    OfflineError,
+    uuid,
+    /** false when this browser refused to give us persistent storage */
+    persistent: true,
+
+    async init() {
+      this.persistent = await storageOk();
+      await impl.init();
+    },
+
+    async _read(name, fn) {
+      try {
+        const rows = await fn();
+        this.online = true; this.stale = false; this.lastSync = Date.now();
+        if (impl.mode === 'supabase') await kvSet('cache:' + name, rows);
+        return rows || [];
+      } catch (e) {
+        if (impl.mode === 'supabase') {
+          const cached = await kvGet('cache:' + name);
+          if (cached) { this.online = false; this.stale = true; return cached; }
+        }
+        this.online = false;
+        throw e;
+      }
+    },
+
+    listProducts()      { return this._read('products',  () => impl.listProducts()); },
+    listMovements(n)    { return this._read('movements', () => impl.listMovements(n)); },
+    listPeople()        { return this._read('people',    () => impl.listPeople()); },
+
+    async _write(fn) {
+      try {
+        const out = await fn();
+        this.online = true;
+        return out;
+      } catch (e) {
+        if (e && e.offline) this.online = false;
+        throw e;
+      }
+    },
+
+    createProduct(p)        { return this._write(() => impl.createProduct(p)); },
+    updateProduct(id, patch){ return this._write(() => impl.updateProduct(id, patch)); },
+    deleteProduct(id)       { return this._write(() => impl.deleteProduct(id)); },
+    applyMovement(m)        { return this._write(() => impl.applyMovement(m)); },
+    addPerson(name)         { return this._write(() => impl.addPerson(name)); },
+    removePerson(id)        { return this._write(() => impl.removePerson(id)); },
+    uploadPhoto(blob, pid)  { return this._write(() => impl.uploadPhoto(blob, pid)); }
+  };
+
+  window.DB = DB;
+})();

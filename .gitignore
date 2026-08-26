@@ -1,0 +1,11 @@
+# Windows / macOS junk
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Scratch files from testing — never meant to ship
+_test.html
+_shot.html
+
+# Local backups exported from the app
+yard-stock-*.json
