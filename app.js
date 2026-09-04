@@ -66,7 +66,13 @@ const I = {
   arrowOut: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20V9"/><polyline points="7 14 12 9 17 14"/><path d="M4 4h16"/></svg>',
   offline: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2l20 20"/><path d="M5 12.5a10 10 0 0 1 4-2.4M2 8.8A15 15 0 0 1 7.5 5.6M16.5 10.2a10 10 0 0 1 2.5 2.3M22 8.8a15 15 0 0 0-6.2-3.4"/><path d="M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="0.6" fill="currentColor"/></svg>',
   info: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 7.6v.4"/></svg>',
-  trash: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/></svg>'
+  trash: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4h6v3"/><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/></svg>',
+  home: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-9"/><path d="M10 20v-6h4v6"/></svg>',
+  items: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h9a2 2 0 0 1 2 2v13l-4-2-4 2-4-2V6a2 2 0 0 1 1-1.7"/><path d="M8 9h8M8 13h5"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V19.6a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.04-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.04H4.4a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.04 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H10.5A1.7 1.7 0 0 0 11.5 4.4V4.3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.02a1.7 1.7 0 0 0 1.56 1.04h.09a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.04z"/></svg>',
+  bolt: '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M13 2 3 14h7l-1 8 11-14h-8l1-6z"/></svg>',
+  count: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>',
+  target: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg>'
 };
 
 /* ===================== Small utils ===================== */
@@ -99,6 +105,7 @@ function dayLabel(iso) {
   if (d.toDateString() === yest.toDateString()) return 'Yesterday';
   return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
 }
+function orDash(v) { const s = (v == null ? '' : String(v)).trim(); return s ? escapeHtml(s) : '—'; }
 
 /* ---- location helpers: "A3.1.1" = rack A, bay 3, level 1, position 1 ---- */
 function parseLoc(s) {
@@ -120,12 +127,12 @@ function locSortKey(loc) {
   return p.rack + String(p.bay).padStart(4, '0') + String(p.level || '0').padStart(4, '0') + String(p.pos || '0').padStart(4, '0');
 }
 
-const CATEGORIES = ['Parts', 'Unfinished', 'Finished', 'Materials', 'Other'];
-const UNITS = ['ea', 'set', 'pair', 'box', 'pack', 'm', 'm²', 'kg', 'litre'];
+const CATEGORIES = ['Parts', 'Assembled', 'Raw materials'];
+const UNITS = ['ea', 'set', 'pair', 'box', 'pack', 'sheet', 'roll', 'm', 'm²', 'kg', 'litre'];
 
 /* ===================== State ===================== */
 const state = {
-  screen: 'stock',
+  screen: 'home',
   products: [],
   movements: [],
   people: [],
@@ -158,7 +165,11 @@ function toast(msg, kind) {
 function productById(id) { return state.products.find(p => p.id === id); }
 function isLow(p) { return num(p.min_qty) > 0 && num(p.qty) <= num(p.min_qty); }
 function isZero(p) { return num(p.qty) <= 0; }
+function isDormant(p) { return !!p.dormant; }
+function needsAttention(p) { return isLow(p) || isZero(p); }
 function qtyClass(p) { return isZero(p) ? 'zero' : isLow(p) ? 'low' : ''; }
+/** Products actually in day-to-day use — dormant catalogue lines sit out of Stock/Racks/Home so they don't clutter live booking, but stay fully visible and editable from Items. */
+function activeProducts() { return state.products.filter(p => !isDormant(p)); }
 function movementProductName(m) {
   if (m.product_name) return m.product_name;
   if (m.products && m.products.name) return m.products.name;
@@ -185,20 +196,24 @@ async function refresh(showSpinner) {
 
 /* ===================== Header & tabs ===================== */
 const TABS = [
+  { id: 'home', label: 'Home', icon: I.home },
   { id: 'stock', label: 'Stock', icon: I.box },
   { id: 'locations', label: 'Racks', icon: I.rack },
-  { id: 'activity', label: 'Activity', icon: I.activity },
-  { id: 'settings', label: 'Me', icon: I.person }
+  { id: 'items', label: 'Items', icon: I.items },
+  { id: 'activity', label: 'Log', icon: I.activity }
 ];
 
 function renderHeader() {
+  const dateStr = new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  const rackLetters = Array.from(new Set(activeProducts().map(p => rackOf(p.location)).filter(r => r && r !== '?'))).sort();
   const titles = {
-    stock: ['Stock', CFG.SITE_NAME || 'Off-site store'],
-    locations: ['Racks', 'Browse by location'],
-    activity: ['Activity', 'Everything booked in and out'],
-    settings: ['Settings', 'You and this device']
+    home: ['Home', (state.me || 'Sign in') + ' · ' + (CFG.SITE_NAME || 'Off-site store') + ' · ' + dateStr],
+    stock: ['Stock', state.products.length + ' line' + (state.products.length === 1 ? '' : 's')],
+    locations: ['Racks', rackLetters.length ? rackLetters.join(', ') + ' · tap to open a bay' : 'Browse by rack'],
+    items: ['Items', state.products.length + ' item' + (state.products.length === 1 ? '' : 's') + ' · manage catalogue'],
+    activity: ['Log', 'Every movement, permanently']
   };
-  const [t, s] = titles[state.screen] || titles.stock;
+  const [t, s] = titles[state.screen] || titles.home;
   $('navTitle').textContent = t;
   $('navSub').textContent = s;
 
@@ -212,7 +227,7 @@ function renderHeader() {
 }
 
 function renderTabs() {
-  const lowCount = state.products.filter(p => isLow(p) || isZero(p)).length;
+  const lowCount = activeProducts().filter(needsAttention).length;
   $('tabbar').innerHTML = TABS.map(tab => {
     const badge = (tab.id === 'stock' && lowCount)
       ? '<span class="tab-badge">' + (lowCount > 99 ? '99+' : lowCount) + '</span>' : '';
@@ -237,17 +252,19 @@ function render() {
   if (state.loading) { el.innerHTML = '<div class="spinner"></div>'; return; }
 
   let html = connectionBannerHtml();
-  if (state.screen === 'stock') html += stockScreenHtml();
+  if (state.screen === 'home') html += homeScreenHtml();
+  else if (state.screen === 'stock') html += stockScreenHtml();
   else if (state.screen === 'locations') html += locationsScreenHtml();
-  else if (state.screen === 'activity') html += activityScreenHtml();
-  else html += settingsScreenHtml();
+  else if (state.screen === 'items') html += itemsScreenHtml();
+  else html += activityScreenHtml();
   el.innerHTML = html;
 
   wireBanner(el);
-  if (state.screen === 'stock') wireStock(el);
+  if (state.screen === 'home') wireHome(el);
+  else if (state.screen === 'stock') wireStock(el);
   else if (state.screen === 'locations') wireLocations(el);
-  else if (state.screen === 'activity') wireActivity(el);
-  else wireSettings(el);
+  else if (state.screen === 'items') wireItems(el);
+  else wireActivity(el);
 }
 
 function connectionBannerHtml() {
@@ -276,41 +293,99 @@ function wireBanner(el) {
   el.querySelectorAll('[data-retry]').forEach(b => b.addEventListener('click', () => refresh(true)));
 }
 
+/* ===================== HOME screen ===================== */
+function homeScreenHtml() {
+  const active = activeProducts();
+  const healthy = active.filter(p => !needsAttention(p)).length;
+  const lowOnly = active.filter(p => isLow(p) && !isZero(p)).length;
+  const out = active.filter(isZero).length;
+  const totalUnits = active.reduce((s, p) => s + num(p.qty), 0);
+  const attention = active.filter(needsAttention)
+    .sort((a, b) => (isZero(b) - isZero(a)) || ((num(b.min_qty) - num(b.qty)) - (num(a.min_qty) - num(a.qty))))
+    .slice(0, 3);
+
+  let html = '<div class="qtile-grid">' +
+    '<button class="qtile in" data-qk="in" type="button"><span class="qtile-icon">' + I.arrowIn + '</span><span class="qtile-label">Book in</span><span class="qtile-sub">Delivery arrived</span></button>' +
+    '<button class="qtile out" data-qk="out" type="button"><span class="qtile-icon">' + I.arrowOut + '</span><span class="qtile-label">Book out</span><span class="qtile-sub">Going to the factory</span></button>' +
+    '<button class="qtile count" data-qk="set" type="button"><span class="qtile-icon">' + I.count + '</span><span class="qtile-label">Stock take</span><span class="qtile-sub">Count a rack</span></button>' +
+    '<button class="qtile find" data-qk="find" type="button"><span class="qtile-icon">' + I.target + '</span><span class="qtile-label">Find an item</span><span class="qtile-sub">Where is it?</span></button>' +
+  '</div>';
+
+  html += '<div class="health-card">' +
+    '<div class="health-top"><span class="health-title">Stock health</span><button class="link-btn" data-goreport type="button">Report</button></div>' +
+    '<div class="health-bar"><span style="flex:' + Math.max(healthy, 0.0001) + ';background:var(--sys-green)"></span><span style="flex:' + Math.max(lowOnly, 0.0001) + ';background:var(--sys-orange)"></span><span style="flex:' + Math.max(out, 0.0001) + ';background:var(--sys-red)"></span></div>' +
+    '<div class="health-legend">' +
+      '<span><b style="color:var(--sys-green)">' + healthy + '</b> healthy</span>' +
+      '<span><b style="color:var(--sys-orange)">' + lowOnly + '</b> low</span>' +
+      '<span><b style="color:var(--sys-red)">' + out + '</b> out</span>' +
+      '<span class="hl-units">' + fmtQty(totalUnits) + ' units</span>' +
+    '</div></div>';
+
+  html += '<div class="section-title">Order these<button class="link-btn" data-seeall type="button">See all</button></div>';
+  html += '<div class="group">';
+  if (!attention.length) {
+    html += '<div class="empty-note">Nothing needs ordering right now.</div>';
+  } else {
+    html += attention.map(p => {
+      const shortfall = isZero(p) ? 'Out of stock' : 'Short ' + fmtQty(num(p.min_qty) - num(p.qty)) + ' ' + (p.unit || 'ea');
+      return '<div class="row"><div class="row-body" data-open="' + p.id + '">' +
+        '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
+        '<div class="row-meta">' + (p.location ? '<span class="meta-chip loc">' + escapeHtml(p.location) + '</span>' : '') + '<span>' + shortfall + '</span></div>' +
+        '</div><button class="order-btn" data-order="' + p.id + '" type="button">Order</button></div>';
+    }).join('');
+  }
+  html += '</div>';
+  return html;
+}
+function wireHome(el) {
+  el.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => openProductDetail(b.getAttribute('data-open'))));
+  el.querySelectorAll('[data-order]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const p = productById(b.getAttribute('data-order'));
+    toast('Flagged for reorder · ' + (p ? p.name : ''), 'good');
+  }));
+  const goReport = el.querySelector('[data-goreport]');
+  if (goReport) goReport.addEventListener('click', () => { state.screen = 'stock'; state.cat = 'Low stock'; render(); });
+  const seeAll = el.querySelector('[data-seeall]');
+  if (seeAll) seeAll.addEventListener('click', () => { state.screen = 'stock'; state.cat = 'Low stock'; render(); });
+  el.querySelectorAll('[data-qk]').forEach(b => b.addEventListener('click', () => {
+    const k = b.getAttribute('data-qk');
+    if (k === 'find') { state.screen = 'stock'; state.cat = 'All'; state.q = ''; render(); return; }
+    if (!activeProducts().length) {
+      toast('Add an item to the catalogue first');
+      openItemForm(null);
+      return;
+    }
+    openPickProduct(k);
+  }));
+}
+
 /* ===================== STOCK screen ===================== */
 function filteredProducts() {
   const q = state.q.trim().toLowerCase();
-  return state.products.filter(p => {
-    if (state.cat === 'Low') { if (!isLow(p) && !isZero(p)) return false; }
-    else if (state.cat !== 'All' && (p.category || 'Other') !== state.cat) return false;
+  return activeProducts().filter(p => {
+    if (state.cat === 'Low stock') { if (!needsAttention(p)) return false; }
+    else if (state.cat !== 'All' && (p.category || 'Parts') !== state.cat) return false;
     if (!q) return true;
-    return [p.name, p.code, p.location, p.notes, p.category]
+    return [p.name, p.code, p.location, p.notes, p.category, p.group_name]
       .some(v => String(v || '').toLowerCase().includes(q));
   }).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
 }
 
 function stockScreenHtml() {
   const list = filteredProducts();
-  const lowCount = state.products.filter(p => isLow(p) || isZero(p)).length;
-  const totalUnits = state.products.reduce((s, p) => s + num(p.qty), 0);
 
   let html = searchRowHtml('Search name, code or rack…');
 
-  html += '<div class="stats">' +
-    '<div class="stat ok"><div class="sv">' + state.products.length + '</div><div class="sl">Products</div></div>' +
-    '<div class="stat ok"><div class="sv">' + fmtQty(totalUnits) + '</div><div class="sl">Units held</div></div>' +
-    '<div class="stat ' + (lowCount ? 'warn' : 'ok') + '"><div class="sv">' + lowCount + '</div><div class="sl">Low / out</div></div>' +
-    '</div>';
-
-  const chips = ['All'].concat(CATEGORIES).concat(['Low']);
+  const chips = ['All'].concat(CATEGORIES).concat(['Low stock']);
   html += '<div class="chiprow">' + chips.map(c =>
-    '<button class="chip ' + (state.cat === c ? 'active' : '') + '" data-cat="' + c + '" type="button">' +
-    (c === 'Low' ? 'Low stock' : c) + '</button>').join('') + '</div>';
+    '<button class="chip ' + (state.cat === c ? 'active' : '') + '" data-cat="' + escapeHtml(c) + '" type="button">' + c + '</button>').join('') + '</div>';
 
   html += '<div class="group">';
-  if (!state.products.length) {
-    html += '<div class="empty-note">No products yet. Tap the <strong>+</strong> button, take a photo of the item and give it a rack code like <strong>A3.1.1</strong>.</div>';
+  if (!activeProducts().length) {
+    html += '<div class="empty-note">No products yet. Go to <strong>Items</strong> to add one — a name and rack code is all it takes.</div>';
   } else if (!list.length) {
-    html += '<div class="empty-note">Nothing matches that.</div>';
+    html += '<div class="empty-note">Nothing matches. Try a rack code like <strong>A3</strong>.</div>';
   } else {
     html += list.map(productRowHtml).join('');
   }
@@ -426,7 +501,7 @@ function attachSwipe(slot) {
 
 /* ---- press feedback ---- */
 document.addEventListener('pointerdown', (e) => {
-  const row = e.target.closest('.row, .rack-head');
+  const row = e.target.closest('.row, .rack-head, .qtile');
   if (!row) return;
   const spring = new Spring(1, { dampingRatio: 1, response: 0.15 });
   spring.set(0.985);
@@ -441,12 +516,13 @@ document.addEventListener('pointerdown', (e) => {
   window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
 });
 
-/* ===================== LOCATIONS screen ===================== */
+/* ===================== RACKS screen ===================== */
 function locationsScreenHtml() {
   const q = state.q.trim().toLowerCase();
+  const base = activeProducts();
   const pool = q
-    ? state.products.filter(p => [p.name, p.code, p.location].some(v => String(v || '').toLowerCase().includes(q)))
-    : state.products;
+    ? base.filter(p => [p.name, p.code, p.location].some(v => String(v || '').toLowerCase().includes(q)))
+    : base;
 
   const racks = {};
   pool.forEach(p => {
@@ -493,7 +569,7 @@ function locationsScreenHtml() {
         '<span class="rack-badge">' + escapeHtml(r) + '</span>' +
         '<div style="flex:1;min-width:0;">' +
           '<div class="rack-name">' + (r === '—' ? 'No rack assigned' : 'Rack ' + escapeHtml(r)) + '</div>' +
-          '<div class="rack-sub">' + items.length + ' product' + (items.length === 1 ? '' : 's') + ' · ' + fmtQty(units) + ' units' + (spots ? ' · ' + spots + ' spot' + (spots === 1 ? '' : 's') : '') + '</div>' +
+          '<div class="rack-sub">' + items.length + ' line' + (items.length === 1 ? '' : 's') + ' · ' + fmtQty(units) + ' units' + (spots ? ' · ' + spots + ' spot' + (spots === 1 ? '' : 's') : '') + '</div>' +
         '</div>' +
         '<span class="rack-chev ' + (open ? 'open' : '') + '">' + I.chev + '</span>' +
       '</div>' + body + '</div>';
@@ -511,7 +587,45 @@ function wireLocations(el) {
   el.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => openProductDetail(b.getAttribute('data-open'))));
 }
 
-/* ===================== ACTIVITY screen ===================== */
+/* ===================== ITEMS screen (catalogue management) ===================== */
+function itemsScreenHtml() {
+  const q = state.q.trim().toLowerCase();
+  const list = state.products
+    .filter(p => !q || [p.name, p.code, p.group_name, p.category].some(v => String(v || '').toLowerCase().includes(q)))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+
+  let html = searchRowHtml('Search the catalogue…');
+  html += '<button class="new-item-btn" id="newItemBtn" type="button">' + I.plus + '<span>New item</span></button>';
+
+  html += '<div class="group">';
+  if (!state.products.length) {
+    html += '<div class="empty-note">No items in the catalogue yet. Tap <strong>New item</strong> to add the first one — photo, name and rack code.</div>';
+  } else if (!list.length) {
+    html += '<div class="empty-note">Nothing matches that.</div>';
+  } else {
+    html += list.map(p => {
+      const sku = orDash(p.code);
+      const group = orDash(p.group_name);
+      return '<div class="row"><div class="row-body" data-edit="' + p.id + '">' +
+        '<div class="row-title">' + escapeHtml(p.name) + (p.dormant ? ' <span class="meta-chip">dormant</span>' : '') + '</div>' +
+        '<div class="row-meta"><span class="row-mono">' + sku + ' · ' + group + '</span></div>' +
+        '</div><span class="row-trail edit-pencil">✎</span></div>';
+    }).join('');
+  }
+  html += '</div>';
+  return html;
+}
+function wireItems(el) {
+  wireSearch(el);
+  const nb = el.querySelector('#newItemBtn');
+  if (nb) nb.addEventListener('click', () => openItemForm(null));
+  el.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => {
+    const p = productById(b.getAttribute('data-edit'));
+    if (p) openItemForm(p);
+  }));
+}
+
+/* ===================== LOG screen (movement history) ===================== */
 function activityScreenHtml() {
   const q = state.q.trim().toLowerCase();
   let list = state.movements.slice();
@@ -565,60 +679,63 @@ function wireActivity(el) {
   }));
 }
 
-/* ===================== SETTINGS screen ===================== */
-function settingsScreenHtml() {
+/* ===================== Settings sheet (team & data) ===================== */
+function openSettingsSheet() {
   const mode = DB.mode === 'supabase' ? 'Shared (Supabase)' : 'Local to this device';
   const sync = DB.lastSync ? fmtWhen(new Date(DB.lastSync).toISOString()) : '—';
 
-  let html = '<div class="section-title">You</div><div class="group">';
-  html += '<div class="row"><span class="avatar" style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--sys-blue),var(--sys-teal));color:#fff;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + escapeHtml(initials(state.me || '?')) + '</span>' +
-    '<div class="row-body" data-changeme><div class="row-title">' + escapeHtml(state.me || 'Not set') + '</div>' +
-    '<div class="row-meta">Your bookings are logged under this name</div></div>' +
-    '<span class="row-trail">' + I.chev + '</span></div>';
-  html += '</div>';
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">Settings</div>' +
+    '<div class="sheet-sub">You, your team, and this device</div>' +
+    '<div class="field-label">You</div><div class="group" style="margin-bottom:16px;">' +
+      '<div class="row"><span class="avatar" style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--sys-blue),var(--sys-teal));color:#fff;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + escapeHtml(initials(state.me || '?')) + '</span>' +
+      '<div class="row-body" data-changeme><div class="row-title">' + escapeHtml(state.me || 'Not set') + '</div>' +
+      '<div class="row-meta">Your bookings are logged under this name</div></div>' +
+      '<span class="row-trail">' + I.chev + '</span></div>' +
+    '</div>' +
+    '<div class="field-label">Team<button class="link-btn" data-addperson type="button" style="float:right;">Add person</button></div>' +
+    '<div class="group" style="margin-bottom:16px;">' +
+    (state.people.length
+      ? state.people.map(p =>
+          '<div class="row"><span class="avatar" style="width:30px;height:30px;border-radius:50%;background:var(--bg-elevated-3);color:var(--label);font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + escapeHtml(initials(p.name)) + '</span>' +
+          '<div class="row-body" data-pickperson="' + escapeHtml(p.name) + '"><div class="row-title">' + escapeHtml(p.name) + (p.name === state.me ? ' <span class="meta-chip" style="background:rgba(10,132,255,.2);color:var(--sys-blue)">you</span>' : '') + '</div></div>' +
+          '<button class="row-trail" data-delperson="' + p.id + '" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button></div>'
+        ).join('')
+      : '<div class="empty-note">No names on the list yet. Add everyone who works the store room — no passwords, they just tap their name once.</div>') +
+    '</div>' +
+    '<div class="field-label">Data</div>' +
+    '<div class="field-group" style="margin-bottom:4px;">' +
+      '<div class="field-row"><span class="fname">Mode</span><span class="field-val">' + mode + '</span></div>' +
+      '<div class="field-row"><span class="fname">Last synced</span><span class="field-val">' + escapeHtml(sync) + '</span></div>' +
+      '<div class="field-row" data-refresh style="cursor:pointer;"><span class="fname" style="color:var(--sys-blue);">Refresh now</span></div>' +
+      '<div class="field-row" data-export style="cursor:pointer;"><span class="fname" style="color:var(--sys-blue);">Export a backup (JSON)</span></div>' +
+    '</div>' +
+    '<div class="status-line">Yard Stock · v1.0<br>Add to Home Screen for a full-screen app.</div>' +
+    '<div class="sheet-actions"><button class="sheet-cancel" data-close type="button" style="flex:1;">Close</button></div>';
 
-  html += '<div class="section-title">Team<button class="st-action" data-addperson type="button">Add person</button></div><div class="group">';
-  if (!state.people.length) {
-    html += '<div class="empty-note">No names on the list yet. Add everyone who works the store room — no passwords, they just tap their name once.</div>';
-  } else {
-    html += state.people.map(p =>
-      '<div class="row"><span class="avatar" style="width:30px;height:30px;border-radius:50%;background:var(--bg-elevated-3);color:var(--label);font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + escapeHtml(initials(p.name)) + '</span>' +
-      '<div class="row-body" data-pickperson="' + escapeHtml(p.name) + '"><div class="row-title">' + escapeHtml(p.name) + (p.name === state.me ? ' <span class="meta-chip" style="background:rgba(10,132,255,.2);color:var(--sys-blue)">you</span>' : '') + '</div></div>' +
-      '<button class="row-trail" data-delperson="' + p.id + '" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button></div>'
-    ).join('');
-  }
-  html += '</div>';
-
-  html += '<div class="section-title">Data</div><div class="group">' +
-    '<div class="row"><div class="row-body" style="cursor:default"><div class="row-title">Mode</div></div><span class="row-trail" style="font-size:14px;color:var(--label-secondary)">' + mode + '</span></div>' +
-    '<div class="row"><div class="row-body" style="cursor:default"><div class="row-title">Last synced</div></div><span class="row-trail" style="font-size:14px;color:var(--label-secondary)">' + escapeHtml(sync) + '</span></div>' +
-    '<div class="row"><div class="row-body" data-refresh><div class="row-title" style="color:var(--sys-blue)">Refresh now</div></div></div>' +
-    '<div class="row"><div class="row-body" data-export><div class="row-title" style="color:var(--sys-blue)">Export a backup (JSON)</div><div class="row-meta">Products and full movement history</div></div></div>' +
-    '</div>';
-
-  html += '<div class="status-line">Yard Stock · v1.0<br>Add to Home Screen for a full-screen app.</div>';
-  return html;
-}
-function wireSettings(el) {
-  const cm = el.querySelector('[data-changeme]');
-  if (cm) cm.addEventListener('click', openPersonSheet);
-  const ap = el.querySelector('[data-addperson]');
-  if (ap) ap.addEventListener('click', () => openAddPersonSheet());
-  el.querySelectorAll('[data-pickperson]').forEach(b => b.addEventListener('click', () => {
-    setMe(b.getAttribute('data-pickperson')); toast('Signed in as ' + state.me, 'good'); render();
+  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+  const cm = sheetEl.querySelector('[data-changeme]');
+  if (cm) cm.addEventListener('click', () => openPersonSheet());
+  const ap = sheetEl.querySelector('[data-addperson]');
+  if (ap) ap.addEventListener('click', () => openAddPersonSheet(() => openSettingsSheet()));
+  sheetEl.querySelectorAll('[data-pickperson]').forEach(b => b.addEventListener('click', () => {
+    setMe(b.getAttribute('data-pickperson')); toast('Signed in as ' + state.me, 'good'); renderHeader(); openSettingsSheet();
   }));
-  el.querySelectorAll('[data-delperson]').forEach(b => b.addEventListener('click', async () => {
+  sheetEl.querySelectorAll('[data-delperson]').forEach(b => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
     const id = b.getAttribute('data-delperson');
     const person = state.people.find(p => p.id === id);
     if (!person) return;
     if (!confirm('Remove ' + person.name + ' from the list? Their past bookings stay in the log.')) return;
-    try { await DB.removePerson(id); if (state.me === person.name) setMe(''); await refresh(); }
-    catch (e) { toast(e.message || 'Could not remove', 'bad'); }
+    try { await DB.removePerson(id); if (state.me === person.name) setMe(''); await refresh(); openSettingsSheet(); }
+    catch (err) { toast(err.message || 'Could not remove', 'bad'); }
   }));
-  const rf = el.querySelector('[data-refresh]');
-  if (rf) rf.addEventListener('click', () => refresh(true));
-  const ex = el.querySelector('[data-export]');
+  const rf = sheetEl.querySelector('[data-refresh]');
+  if (rf) rf.addEventListener('click', async () => { await refresh(true); openSettingsSheet(); });
+  const ex = sheetEl.querySelector('[data-export]');
   if (ex) ex.addEventListener('click', exportBackup);
+  openSheet();
 }
 
 function exportBackup() {
@@ -683,31 +800,53 @@ function animateOpacity(el, target, ms) {
 scrimEl.addEventListener('click', closeSheet);
 
 /* ===================== Product detail sheet ===================== */
+let detailMore = false;
+
 function openProductDetail(id) {
   const p = productById(id);
   if (!p) { toast('Product not found'); return; }
-  const recent = state.movements.filter(m => m.product_id === id).slice(0, 6);
+  detailMore = false;
+  renderProductDetail(p);
+  openSheet();
+}
 
-  const meta = [];
-  if (p.code) meta.push('<span class="meta-chip code">' + escapeHtml(p.code) + '</span>');
-  if (p.category) meta.push('<span class="meta-chip cat">' + escapeHtml(p.category) + '</span>');
-  if (num(p.min_qty) > 0) meta.push('<span class="meta-chip">min ' + fmtQty(p.min_qty) + '</span>');
+function renderProductDetail(p) {
+  const recent = state.movements.filter(m => m.product_id === p.id).slice(0, 3);
+
+  const morePanel = detailMore
+    ? '<div class="field-group" style="margin-bottom:12px;">' +
+        (p.notes ? '<div class="field-row" style="display:block;"><div class="row-notes" style="white-space:normal;font-size:13.5px;line-height:1.45;">' + escapeHtml(p.notes) + '</div></div>' : '') +
+        '<div class="field-row"><span class="fname">Preferred supplier</span><span class="field-val">' + orDash(p.pref_supplier) + (p.pref_price ? ' · ' + escapeHtml(p.pref_price) : '') + '</span></div>' +
+        '<div class="field-row"><span class="fname">Pref MOQ / lead time</span><span class="field-val">' + orDash(p.pref_moq) + ' · ' + orDash(p.pref_lead_time) + '</span></div>' +
+        '<div class="field-row"><span class="fname">Secondary supplier</span><span class="field-val">' + orDash(p.sec_supplier) + (p.sec_price ? ' · ' + escapeHtml(p.sec_price) : '') + '</span></div>' +
+        '<div class="field-row"><span class="fname">Sec MOQ / lead time</span><span class="field-val">' + orDash(p.sec_moq) + ' · ' + orDash(p.sec_lead_time) + '</span></div>' +
+        '<div class="field-row"><span class="fname">Bulk location</span><span class="field-val">' + orDash(p.bulk_location) + '</span></div>' +
+        '<div class="field-row"><span class="fname">Pack size / weight</span><span class="field-val">' + orDash(p.pack_size) + ' · ' + orDash(p.pack_weight) + '</span></div>' +
+        '<div class="field-row"><span class="fname">Last updated</span><span class="field-val">' + (p.updated_at ? fmtWhen(p.updated_at) : '—') + '</span></div>' +
+        '<div class="field-row"><span class="fname">Dormant</span><span class="field-val">' + (p.dormant ? 'Yes' : 'No') + '</span></div>' +
+      '</div>'
+    : '';
 
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
     (p.photo_url ? '<img class="photo-hero" src="' + escapeHtml(p.photo_url) + '" alt="">' : '') +
     '<div class="sheet-title">' + escapeHtml(p.name) + '</div>' +
-    '<div class="sheet-sub">' + (p.location
-      ? '<span class="meta-chip loc" style="font-size:14px;padding:3px 10px;">' + escapeHtml(p.location) + '</span> ' + locWords(p.location)
-      : 'No rack location set') + '</div>' +
-    (meta.length ? '<div class="row-meta" style="margin:-6px 0 12px;">' + meta.join('') + '</div>' : '') +
-    '<div class="detail-qty ' + qtyClass(p) + '"><span class="dq">' + fmtQty(p.qty) + '</span><span class="du">' + escapeHtml(p.unit || 'ea') + ' in stock' + (isLow(p) && !isZero(p) ? ' · running low' : isZero(p) ? ' · none left' : '') + '</span></div>' +
-    (p.notes ? '<div class="row-notes" style="white-space:normal;margin-bottom:12px;font-size:14px;line-height:1.45;">' + escapeHtml(p.notes) + '</div>' : '') +
+    '<div class="sheet-sub">' + (p.category || 'Parts') + (p.code ? ' · ' + escapeHtml(p.code) : '') + '</div>' +
+    '<div class="detail-qty ' + qtyClass(p) + '"><span class="dq">' + fmtQty(p.qty) + '</span><span class="du">' + escapeHtml(p.unit || 'ea') + ' in stock · warn below ' + fmtQty(p.min_qty) + '</span></div>' +
     '<div class="detail-actions">' +
       '<button class="detail-btn in" data-in type="button">' + I.arrowIn + ' Book in</button>' +
       '<button class="detail-btn out" data-out type="button">' + I.arrowOut + ' Book out</button>' +
     '</div>' +
-    (recent.length ? '<div class="field-label">Recent movements</div><div class="group" style="margin-bottom:12px;">' +
+    '<div class="field-group" style="margin-bottom:12px;">' +
+      '<div class="field-row"><span class="fname">Rack location</span><span class="field-val" style="color:var(--sys-teal);font-weight:700;font-variant-numeric:tabular-nums;">' + orDash(p.location) + '</span></div>' +
+      '<div class="field-row"><span class="fname">SKU</span><span class="field-val" style="font-family:ui-monospace,Menlo,monospace;">' + orDash(p.code) + '</span></div>' +
+      '<div class="field-row"><span class="fname">Group / type</span><span class="field-val">' + orDash(p.group_name) + ' · ' + orDash(p.category) + '</span></div>' +
+      '<div class="field-row"><span class="fname">Cost (budget)</span><span class="field-val">' + orDash(p.cost) + '</span></div>' +
+    '</div>' +
+    '<button class="link-btn" data-more type="button" style="margin-bottom:6px;">' + (detailMore ? '− Hide' : '+ Show') + ' cost, supplier &amp; pack details</button>' +
+    morePanel +
+    '<button class="sheet-cancel" data-count type="button" style="width:100%;border-radius:999px;font-weight:700;margin-bottom:14px;">Set count (stock take)</button>' +
+    (recent.length ? '<div class="field-label">Last movements</div><div class="group" style="margin-bottom:12px;">' +
       recent.map(m => {
         const d = num(m.delta);
         const kind = m.reason === 'set' ? 'set' : d > 0 ? 'in' : 'out';
@@ -718,28 +857,20 @@ function openProductDetail(id) {
       }).join('') + '</div>' : '') +
     '<div class="sheet-actions">' +
       '<button class="sheet-cancel" data-close type="button">Close</button>' +
-      '<button class="sheet-cancel" data-count type="button">Set count</button>' +
-      '<button class="sheet-cancel" data-edit type="button" style="color:var(--sys-blue);font-weight:700;">Edit</button>' +
+      '<button class="sheet-cancel" data-edit type="button" style="color:var(--sys-blue);font-weight:700;">Edit item</button>' +
     '</div>';
 
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
-  sheetEl.querySelector('[data-in]').addEventListener('click', () => openMoveSheet(id, 'in'));
-  sheetEl.querySelector('[data-out]').addEventListener('click', () => openMoveSheet(id, 'out'));
-  sheetEl.querySelector('[data-count]').addEventListener('click', () => openMoveSheet(id, 'set'));
-  sheetEl.querySelector('[data-edit]').addEventListener('click', () => openProductSheet(p));
-  openSheet();
-}
-function locWords(loc) {
-  const l = parseLoc(loc);
-  if (!l) return '';
-  const bits = ['Rack ' + l.rack, 'bay ' + l.bay];
-  if (l.level) bits.push('level ' + l.level);
-  if (l.pos) bits.push('position ' + l.pos);
-  return bits.join(', ');
+  sheetEl.querySelector('[data-in]').addEventListener('click', () => openMoveSheet(p.id, 'in'));
+  sheetEl.querySelector('[data-out]').addEventListener('click', () => openMoveSheet(p.id, 'out'));
+  sheetEl.querySelector('[data-count]').addEventListener('click', () => openMoveSheet(p.id, 'set'));
+  sheetEl.querySelector('[data-edit]').addEventListener('click', () => openItemForm(p));
+  sheetEl.querySelector('[data-more]').addEventListener('click', () => { detailMore = !detailMore; renderProductDetail(productById(p.id) || p); });
 }
 
 /* ===================== Move sheet (book in / out / set) ===================== */
 let moveCtx = null;
+const MOVE_TITLES = { in: 'Book in', out: 'Book out', set: 'Stock take' };
 
 function openMoveSheet(productId, dir) {
   const p = productById(productId);
@@ -763,8 +894,8 @@ function renderMoveSheet() {
 
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
-    '<div class="sheet-title">' + escapeHtml(p.name) + '</div>' +
-    '<div class="sheet-sub">' + (p.location ? escapeHtml(p.location) + ' · ' : '') + fmtQty(cur) + ' ' + escapeHtml(p.unit || 'ea') + ' in stock now</div>' +
+    '<div class="sheet-title">' + (MOVE_TITLES[moveCtx.dir] || 'Book out') + '</div>' +
+    '<div class="sheet-sub">' + escapeHtml(p.name) + (p.location ? ' · ' + escapeHtml(p.location) : '') + '</div>' +
     '<div class="segmented">' +
       '<button class="seg-btn in ' + (moveCtx.dir === 'in' ? 'active' : '') + '" data-dir="in" type="button">' + I.arrowIn + ' In</button>' +
       '<button class="seg-btn out ' + (moveCtx.dir === 'out' ? 'active' : '') + '" data-dir="out" type="button">' + I.arrowOut + ' Out</button>' +
@@ -780,7 +911,7 @@ function renderMoveSheet() {
     '<div class="result-line ' + (invalid ? 'bad' : '') + '">' +
       (invalid && after < 0
         ? 'Only ' + fmtQty(cur) + ' ' + escapeHtml(p.unit || 'ea') + ' on the system — book out ' + fmtQty(cur) + ' or less, or use Set count.'
-        : 'New count: <strong>' + fmtQty(after) + ' ' + escapeHtml(p.unit || 'ea') + '</strong>') +
+        : cur + ' → <strong>' + fmtQty(after) + ' ' + escapeHtml(p.unit || 'ea') + '</strong>') +
     '</div>' +
     '<div class="field-label">Reference (optional)</div>' +
     '<input type="text" id="moveNote" placeholder="Job number, order, reason…" maxlength="120" value="' + escapeHtml(moveCtx.note) + '">' +
@@ -795,7 +926,8 @@ function renderMoveSheet() {
       '<button class="sheet-save ' + (isSet ? '' : moveCtx.dir) + '" data-confirm type="button" ' + (invalid ? 'disabled' : '') + '>' +
         (isSet ? 'Set to ' + fmtQty(moveCtx.target) : moveCtx.dir === 'in' ? 'Book in ' + fmtQty(moveCtx.amount) : 'Book out ' + fmtQty(moveCtx.amount)) +
       '</button>' +
-    '</div>';
+    '</div>' +
+    '<div class="status-line">Stamped as ' + escapeHtml(state.me || '—') + ' · needs a connection to save</div>';
 
   const valEl = $('moveVal');
   function setVal(v, rerender) {
@@ -843,7 +975,7 @@ function updateMoveResult() {
     line.className = 'result-line' + (invalid ? ' bad' : '');
     line.innerHTML = invalid && after < 0
       ? 'Only ' + fmtQty(cur) + ' on the system — book out less, or use Set count.'
-      : 'New count: <strong>' + fmtQty(after) + ' ' + escapeHtml(p.unit || 'ea') + '</strong>';
+      : cur + ' → <strong>' + fmtQty(after) + ' ' + escapeHtml(p.unit || 'ea') + '</strong>';
   }
   const btn = sheetEl.querySelector('[data-confirm]');
   if (btn) {
@@ -881,39 +1013,61 @@ async function confirmMove() {
   }
 }
 
-/* ===================== Product add / edit sheet ===================== */
-let prodDraft = null;
+/* ===================== Item form (add / edit catalogue entry) ===================== */
+let itemDraft = null;
 
-function openProductSheet(existing) {
+function openItemForm(existing) {
   const p = existing || {};
   const loc = parseLoc(p.location) || { rack: '', bay: '', level: '', pos: '' };
-  prodDraft = {
+  itemDraft = {
     id: p.id || null,
-    name: p.name || '',
-    code: p.code || '',
-    category: p.category || 'Parts',
-    unit: p.unit || 'ea',
-    qty: p.id ? num(p.qty) : 0,
-    min_qty: num(p.min_qty),
-    notes: p.notes || '',
-    photo_url: p.photo_url || '',
-    photoBlob: null,
-    rack: loc.rack, bay: loc.bay, level: loc.level, pos: loc.pos
+    name: p.name || '', code: p.code || '', notes: p.notes || '',
+    category: p.category || 'Parts', group_name: p.group_name || '',
+    unit: p.unit || 'ea', qty: p.id ? num(p.qty) : 0, min_qty: num(p.min_qty) || '', cost: p.cost || '',
+    rack: loc.rack, bay: loc.bay, level: loc.level, pos: loc.pos, bulk_location: p.bulk_location || '',
+    pref_supplier: p.pref_supplier || '', pref_moq: p.pref_moq || '', pref_lead_time: p.pref_lead_time || '', pref_price: p.pref_price || '',
+    sec_supplier: p.sec_supplier || '', sec_moq: p.sec_moq || '', sec_lead_time: p.sec_lead_time || '', sec_price: p.sec_price || '',
+    pack_size: p.pack_size || '', pack_weight: p.pack_weight || '', dormant: !!p.dormant,
+    photo_url: p.photo_url || '', photoBlob: null
   };
-  renderProductSheet();
+  renderItemForm();
   openSheet();
 }
 
-function renderProductSheet() {
-  const d = prodDraft;
+function uniqueValues(field) {
+  return Array.from(new Set(state.products.map(p => p[field]).filter(v => v && String(v).trim()))).sort();
+}
+function uniqueRacks() {
+  const set = new Set();
+  state.products.forEach(p => { const r = rackOf(p.location); if (r && r !== '?') set.add(r); });
+  'ABCDEFGHIJ'.split('').forEach(r => set.add(r));
+  return Array.from(set).sort();
+}
+
+function formFieldHtml(id, label, value, opts) {
+  opts = opts || {};
+  const tag = opts.textarea ? 'textarea' : 'input';
+  const attrs = opts.textarea
+    ? 'rows="2" style="resize:none;"'
+    : 'type="' + (opts.type || 'text') + '"' + (opts.inputmode ? ' inputmode="' + opts.inputmode + '"' : '');
+  const inner = opts.textarea ? escapeHtml(value) : '';
+  const valAttr = opts.textarea ? '' : ' value="' + escapeHtml(value) + '"';
+  return '<label class="form-field"><div class="ff-label">' + label + '</div>' +
+    '<' + tag + ' id="' + id + '" data-ff="' + id + '" ' + attrs + valAttr +
+    (opts.placeholder ? ' placeholder="' + escapeHtml(opts.placeholder) + '"' : '') +
+    (opts.mono ? ' style="font-family:ui-monospace,Menlo,monospace;"' : '') + '>' + inner + '</' + tag + '></label>';
+}
+
+function renderItemForm() {
+  const d = itemDraft;
   const editing = !!d.id;
   const locStr = buildLoc(d.rack, d.bay, d.level, d.pos);
   const rackOpts = uniqueRacks();
+  const groups = uniqueValues('group_name');
 
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
-    '<div class="sheet-title">' + (editing ? 'Edit product' : 'New product') + '</div>' +
-    '<div class="sheet-sub">' + (editing ? 'Changes apply for everyone.' : 'Photo, name and rack code — that is all it takes.') + '</div>' +
+    '<div class="sheet-title">' + (editing ? 'Edit item' : 'New item') + '</div>' +
 
     '<button class="photo-tile" data-photo type="button">' +
       (d.photo_url
@@ -921,16 +1075,34 @@ function renderProductSheet() {
         : I.camera + '<span>Take a photo of the item</span>') +
     '</button>' +
 
-    '<input type="text" id="pName" placeholder="What is it? e.g. Oak chair leg, 450mm" maxlength="120" value="' + escapeHtml(d.name) + '">' +
-    '<input type="text" id="pCode" placeholder="Code / SKU (optional)" maxlength="40" value="' + escapeHtml(d.code) + '">' +
+    '<div class="form-section-label">Basics</div>' +
+    '<div class="form-card">' +
+      formFieldHtml('fName', 'Item name', d.name, { placeholder: 'e.g. Oak leg, turned 430mm' }) +
+      formFieldHtml('fCode', 'SKU', d.code, { placeholder: 'e.g. LG-430', mono: true }) +
+      formFieldHtml('fNotes', 'Description', d.notes, { textarea: true, placeholder: 'Short description' }) +
+    '</div>' +
 
-    '<div class="field-label">Category</div>' +
-    '<div class="pill-grid">' + CATEGORIES.map(c =>
-      '<button class="pill-btn ' + (d.category === c ? 'active' : '') + '" data-pcat="' + c + '" type="button">' + c + '</button>').join('') + '</div>' +
+    '<div class="form-section-label">Group &amp; category</div>' +
+    '<div class="form-card">' + formFieldHtml('fGroup', 'Group', d.group_name, { placeholder: 'e.g. Timber' }) + '</div>' +
+    (groups.length ? '<div class="chip-wrap">' + groups.map(g => '<button class="pill-btn pill-sm" data-setgroup="' + escapeHtml(g) + '" type="button">' + escapeHtml(g) + '</button>').join('') + '</div>' : '') +
+    '<div class="pill-grid" style="margin-top:6px;">' + CATEGORIES.map(c =>
+      '<button class="pill-btn ' + (d.category === c ? 'active' : '') + '" data-pcat="' + escapeHtml(c) + '" type="button">' + c + '</button>').join('') + '</div>' +
 
-    '<div class="field-label">Where is it stored?</div>' +
+    '<div class="form-section-label">Stock levels</div>' +
+    '<div class="form-card">' +
+      '<div class="form-field-pair">' +
+        (editing
+          ? '<div class="form-field"><div class="ff-label">Current qty</div><div class="ff-readonly">' + fmtQty(d.qty) + ' ' + escapeHtml(d.unit) + ' · use Set count to change</div></div>'
+          : formFieldHtml('fQty', 'Starting qty', d.qty, { type: 'number', inputmode: 'decimal' })) +
+        '<label class="form-field"><div class="ff-label">Unit</div><select id="fUnit" data-ff="fUnit">' + UNITS.map(u => '<option value="' + u + '" ' + (d.unit === u ? 'selected' : '') + '>' + u + '</option>').join('') + '</select></label>' +
+      '</div>' +
+      formFieldHtml('fMin', 'Reorder qty (min stock)', d.min_qty, { type: 'number', inputmode: 'decimal', placeholder: 'Warn when stock drops below this' }) +
+      formFieldHtml('fCost', 'Cost (budget price)', d.cost, { placeholder: 'e.g. £8.40' }) +
+    '</div>' +
+
+    '<div class="form-section-label">Location</div>' +
     '<div class="locpick">' +
-      '<div class="locpick-preview ' + (locStr ? '' : 'none') + '">' + (locStr ? escapeHtml(locStr) : 'No location set') + '</div>' +
+      '<div class="locpick-preview ' + (locStr ? '' : 'none') + '">' + (locStr ? escapeHtml(locStr) : 'No rack location set') + '</div>' +
       '<div class="locpick-grid">' +
         '<div class="locpick-cell"><label>Rack</label>' +
           '<select id="lRack"><option value="">—</option>' +
@@ -942,68 +1114,75 @@ function renderProductSheet() {
       '</div>' +
       '<button class="locpick-clear" data-locclear type="button">Clear location</button>' +
     '</div>' +
+    '<div class="form-card" style="margin-top:10px;">' + formFieldHtml('fBulk', 'Bulk location', d.bulk_location, { placeholder: 'e.g. Yard 2, bay 4' }) + '</div>' +
 
-    '<div class="field-group">' +
-      '<div class="field-row"><span class="fname">Unit</span><select id="pUnit">' +
-        UNITS.map(u => '<option value="' + u + '" ' + (d.unit === u ? 'selected' : '') + '>' + u + '</option>').join('') +
-      '</select></div>' +
-      (editing
-        ? '<div class="field-row"><span class="fname">Count</span><span style="color:var(--label-secondary);font-size:15px;">' + fmtQty(d.qty) + ' ' + escapeHtml(d.unit) + ' · change with Set count</span></div>'
-        : '<div class="field-row"><span class="fname">Opening count</span><input type="number" id="pQty" inputmode="decimal" value="' + d.qty + '" min="0"></div>') +
-      '<div class="field-row"><span class="fname">Warn me below</span><input type="number" id="pMin" inputmode="decimal" value="' + d.min_qty + '" min="0" placeholder="0"></div>' +
+    '<div class="form-section-label">Preferred supplier</div>' +
+    '<div class="form-card">' +
+      formFieldHtml('fPrefSupplier', 'Supplier', d.pref_supplier, { placeholder: 'Supplier name' }) +
+      '<div class="form-field-pair">' + formFieldHtml('fPrefMoq', 'MOQ', d.pref_moq, {}) + formFieldHtml('fPrefLead', 'Lead time', d.pref_lead_time, {}) + '</div>' +
+      formFieldHtml('fPrefPrice', 'Price', d.pref_price, { placeholder: 'e.g. £7.90' }) +
     '</div>' +
 
-    '<textarea class="sheet-notes" id="pNotes" placeholder="Notes — finish, batch, customer, anything worth knowing…" maxlength="1000">' + escapeHtml(d.notes) + '</textarea>' +
+    '<div class="form-section-label">Secondary supplier</div>' +
+    '<div class="form-card">' +
+      formFieldHtml('fSecSupplier', 'Supplier', d.sec_supplier, { placeholder: 'Supplier name (optional)' }) +
+      '<div class="form-field-pair">' + formFieldHtml('fSecMoq', 'MOQ', d.sec_moq, {}) + formFieldHtml('fSecLead', 'Lead time', d.sec_lead_time, {}) + '</div>' +
+      formFieldHtml('fSecPrice', 'Price', d.sec_price, { placeholder: 'e.g. £8.60' }) +
+    '</div>' +
+
+    '<div class="form-section-label">Packing &amp; status</div>' +
+    '<div class="form-card">' +
+      '<div class="form-field-pair">' + formFieldHtml('fPackSize', 'Pack size', d.pack_size, { placeholder: 'e.g. 50 ea/box' }) + formFieldHtml('fPackWeight', 'Pack weight', d.pack_weight, { placeholder: 'e.g. 18 kg' }) + '</div>' +
+      '<div class="dormant-row"><span class="fname">Dormant</span><div class="segmented segmented-sm">' +
+        '<button class="seg-btn ' + (!d.dormant ? 'active' : '') + '" data-dormant="0" type="button">No</button>' +
+        '<button class="seg-btn ' + (d.dormant ? 'active' : '') + '" data-dormant="1" type="button">Yes</button>' +
+      '</div></div>' +
+    '</div>' +
 
     '<div class="sheet-actions">' +
       '<button class="sheet-cancel" data-close type="button">Cancel</button>' +
       (editing ? '<button class="sheet-delete" data-delete type="button">' + I.trash + '</button>' : '') +
-      '<button class="sheet-save" data-save type="button">' + (editing ? 'Save' : 'Add product') + '</button>' +
+      '<button class="sheet-save" data-save type="button">' + (editing ? 'Save' : 'Create item') + '</button>' +
     '</div>';
 
-  // keep typed values in the draft so re-renders don't lose them
-  const bindText = (id, key) => {
-    const e = $(id); if (e) e.addEventListener('input', () => { d[key] = e.value; });
-  };
-  bindText('pName', 'name'); bindText('pCode', 'code'); bindText('pNotes', 'notes');
+  sheetEl.querySelectorAll('[data-ff]').forEach(e => e.addEventListener('input', () => {
+    const key = e.getAttribute('data-ff');
+    const map = { fName: 'name', fCode: 'code', fNotes: 'notes', fGroup: 'group_name', fQty: 'qty', fUnit: 'unit',
+      fMin: 'min_qty', fCost: 'cost', fBulk: 'bulk_location', fPrefSupplier: 'pref_supplier', fPrefMoq: 'pref_moq',
+      fPrefLead: 'pref_lead_time', fPrefPrice: 'pref_price', fSecSupplier: 'sec_supplier', fSecMoq: 'sec_moq',
+      fSecLead: 'sec_lead_time', fSecPrice: 'sec_price', fPackSize: 'pack_size', fPackWeight: 'pack_weight' };
+    if (map[key]) d[map[key]] = e.value;
+  }));
   ['lBay', 'lLevel', 'lPos'].forEach((id, i) => {
     const key = ['bay', 'level', 'pos'][i];
     const e = $(id);
     e.addEventListener('input', () => { d[key] = e.value.replace(/\D/g, ''); updateLocPreview(); });
   });
   $('lRack').addEventListener('change', () => { d.rack = $('lRack').value; updateLocPreview(); });
-  $('pUnit').addEventListener('change', () => { d.unit = $('pUnit').value; });
-  if ($('pQty')) $('pQty').addEventListener('input', () => { d.qty = num($('pQty').value); });
-  $('pMin').addEventListener('input', () => { d.min_qty = num($('pMin').value); });
-
+  sheetEl.querySelector('[data-locclear]').addEventListener('click', () => { d.rack = ''; d.bay = ''; d.level = ''; d.pos = ''; renderItemForm(); });
   sheetEl.querySelectorAll('[data-pcat]').forEach(b => b.addEventListener('click', () => {
     d.category = b.getAttribute('data-pcat');
     sheetEl.querySelectorAll('[data-pcat]').forEach(x => x.classList.toggle('active', x.getAttribute('data-pcat') === d.category));
   }));
-  sheetEl.querySelector('[data-locclear]').addEventListener('click', () => {
-    d.rack = ''; d.bay = ''; d.level = ''; d.pos = '';
-    renderProductSheet();
-  });
+  sheetEl.querySelectorAll('[data-setgroup]').forEach(b => b.addEventListener('click', () => { d.group_name = b.getAttribute('data-setgroup'); $('fGroup').value = d.group_name; }));
+  sheetEl.querySelectorAll('[data-dormant]').forEach(b => b.addEventListener('click', () => {
+    d.dormant = b.getAttribute('data-dormant') === '1';
+    sheetEl.querySelectorAll('[data-dormant]').forEach(x => x.classList.toggle('active', (x.getAttribute('data-dormant') === '1') === d.dormant));
+  }));
   sheetEl.querySelector('[data-photo]').addEventListener('click', capturePhoto);
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
-  sheetEl.querySelector('[data-save]').addEventListener('click', saveProduct);
+  sheetEl.querySelector('[data-save]').addEventListener('click', saveItem);
   const del = sheetEl.querySelector('[data-delete]');
-  if (del) del.addEventListener('click', deleteProduct);
+  if (del) del.addEventListener('click', deleteItem);
 }
 
 function updateLocPreview() {
-  const d = prodDraft;
+  const d = itemDraft;
   const s = buildLoc(d.rack, d.bay, d.level, d.pos);
   const el = sheetEl.querySelector('.locpick-preview');
   if (!el) return;
   el.className = 'locpick-preview' + (s ? '' : ' none');
-  el.textContent = s || 'No location set';
-}
-function uniqueRacks() {
-  const set = new Set();
-  state.products.forEach(p => { const r = rackOf(p.location); if (r && r !== '?') set.add(r); });
-  'ABCDEFGHIJ'.split('').forEach(r => set.add(r));
-  return Array.from(set).sort();
+  el.textContent = s || 'No rack location set';
 }
 
 /* ---- photo capture + compression ---- */
@@ -1016,9 +1195,9 @@ function capturePhoto() {
     if (!file) return;
     try {
       const blob = await compressImage(file);
-      prodDraft.photoBlob = blob;
-      prodDraft.photo_url = URL.createObjectURL(blob);
-      renderProductSheet();
+      itemDraft.photoBlob = blob;
+      itemDraft.photo_url = URL.createObjectURL(blob);
+      renderItemForm();
     } catch (e) {
       toast('Could not read that photo', 'bad');
     }
@@ -1052,12 +1231,10 @@ async function compressImage(file) {
   return await new Promise((resolve) => canvas.toBlob(b => resolve(b), 'image/jpeg', quality));
 }
 
-async function saveProduct() {
-  const d = prodDraft;
-  d.name = ($('pName').value || '').trim();
-  if (!d.name) { $('pName').focus(); toast('Give it a name first'); return; }
-  d.code = ($('pCode').value || '').trim();
-  d.notes = ($('pNotes').value || '').trim();
+async function saveItem() {
+  const d = itemDraft;
+  d.name = ($('fName').value || '').trim();
+  if (!d.name) { $('fName').focus(); toast('Give it a name first'); return; }
 
   const btn = sheetEl.querySelector('[data-save]');
   btn.disabled = true; btn.textContent = 'Saving…';
@@ -1069,8 +1246,17 @@ async function saveProduct() {
       photoUrl = await DB.uploadPhoto(d.photoBlob, d.id || undefined);
     }
     const payload = {
-      name: d.name, code: d.code, category: d.category, location: buildLoc(d.rack, d.bay, d.level, d.pos),
-      unit: d.unit, min_qty: num(d.min_qty), notes: d.notes, photo_url: photoUrl || null
+      name: d.name, code: (d.code || '').trim(), notes: (d.notes || '').trim(),
+      category: d.category, group_name: (d.group_name || '').trim() || null,
+      location: buildLoc(d.rack, d.bay, d.level, d.pos), unit: d.unit,
+      min_qty: num(d.min_qty), cost: (d.cost || '').trim() || null,
+      bulk_location: (d.bulk_location || '').trim() || null,
+      pref_supplier: (d.pref_supplier || '').trim() || null, pref_moq: (d.pref_moq || '').trim() || null,
+      pref_lead_time: (d.pref_lead_time || '').trim() || null, pref_price: (d.pref_price || '').trim() || null,
+      sec_supplier: (d.sec_supplier || '').trim() || null, sec_moq: (d.sec_moq || '').trim() || null,
+      sec_lead_time: (d.sec_lead_time || '').trim() || null, sec_price: (d.sec_price || '').trim() || null,
+      pack_size: (d.pack_size || '').trim() || null, pack_weight: (d.pack_weight || '').trim() || null,
+      dormant: !!d.dormant, photo_url: photoUrl || null
     };
     if (d.id) {
       await DB.updateProduct(d.id, payload);
@@ -1081,17 +1267,17 @@ async function saveProduct() {
     }
     closeSheet();
     await refresh();
-    toast(d.id ? 'Saved' : 'Added ' + d.name, 'good');
+    toast(d.id ? 'Saved · ' + d.name : 'Item created · ' + d.name, 'good');
   } catch (e) {
-    btn.disabled = false; btn.textContent = d.id ? 'Save' : 'Add product';
+    btn.disabled = false; btn.textContent = d.id ? 'Save' : 'Create item';
     toast(e && e.offline ? 'No connection — not saved' : (e.message || 'Could not save'), 'bad');
   }
 }
 
-async function deleteProduct() {
-  const d = prodDraft;
+async function deleteItem() {
+  const d = itemDraft;
   if (!d.id) return;
-  if (!confirm('Remove "' + d.name + '" from the stock list?\n\nIts movement history is kept.')) return;
+  if (!confirm('Remove "' + d.name + '" from the catalogue?\n\nIts movement history is kept.')) return;
   try {
     await DB.deleteProduct(d.id);
     closeSheet();
@@ -1171,14 +1357,14 @@ function openFabSheet() {
       '<button class="detail-btn out" data-pickout type="button">' + I.arrowOut + ' Book out</button>' +
     '</div>' +
     '<div class="group" style="margin-top:6px;">' +
-      '<div class="row"><span class="thumb-ph">' + I.plus + '</span><div class="row-body" data-newprod>' +
-        '<div class="row-title">New product</div><div class="row-meta">Photo, name and a rack code</div></div>' +
+      '<div class="row"><span class="thumb-ph">' + I.plus + '</span><div class="row-body" data-newitem>' +
+        '<div class="row-title">New item</div><div class="row-meta">Photo, name and a rack code</div></div>' +
         '<span class="row-trail">' + I.chev + '</span></div>' +
     '</div>' +
     '<div class="sheet-actions"><button class="sheet-cancel" data-close type="button">Cancel</button></div>';
   sheetEl.querySelector('[data-pickin]').addEventListener('click', () => openPickProduct('in'));
   sheetEl.querySelector('[data-pickout]').addEventListener('click', () => openPickProduct('out'));
-  sheetEl.querySelector('[data-newprod]').addEventListener('click', () => openProductSheet(null));
+  sheetEl.querySelector('[data-newitem]').addEventListener('click', () => openItemForm(null));
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
   openSheet();
 }
@@ -1192,14 +1378,14 @@ function openPickProduct(dir) {
 }
 function renderPickProduct(dir) {
   const q = pickQuery.trim().toLowerCase();
-  const list = state.products
+  const list = activeProducts()
     .filter(p => !q || [p.name, p.code, p.location].some(v => String(v || '').toLowerCase().includes(q)))
     .sort((a, b) => String(a.name).localeCompare(String(b.name)))
     .slice(0, 40);
 
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
-    '<div class="sheet-title">' + (dir === 'in' ? 'Book in' : 'Book out') + '</div>' +
+    '<div class="sheet-title">' + (MOVE_TITLES[dir] || 'Book out') + '</div>' +
     '<div class="sheet-sub">Which item? Search by name, code or rack.</div>' +
     '<div class="search-row" style="background:var(--bg-elevated-2);">' +
       '<span class="search-icon">' + I.search + '</span>' +
@@ -1233,6 +1419,8 @@ function renderPickProduct(dir) {
 $('fabAdd').innerHTML = I.plus;
 $('fabAdd').addEventListener('click', () => { if (!state.loading) openFabSheet(); });
 $('navMe').addEventListener('click', () => openPersonSheet());
+$('navGear').innerHTML = I.gear;
+$('navGear').addEventListener('click', () => openSettingsSheet());
 
 window.addEventListener('online', () => { DB.online = true; refresh(); });
 window.addEventListener('offline', () => { DB.online = false; render(); });

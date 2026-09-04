@@ -42,6 +42,27 @@ create index if not exists products_location_idx on public.products (location);
 create index if not exists products_archived_idx on public.products (archived);
 
 -- ---------------------------------------------------------
+-- Catalogue detail — added for the full "Items" management screen.
+-- All additive (add column if not exists), so re-running this file
+-- on a project that already has data is safe and keeps everything.
+-- SKU and description reuse the existing `code` / `notes` columns.
+-- ---------------------------------------------------------
+alter table public.products add column if not exists group_name      text;
+alter table public.products add column if not exists bulk_location   text;
+alter table public.products add column if not exists cost            text;
+alter table public.products add column if not exists pref_supplier   text;
+alter table public.products add column if not exists pref_moq        text;
+alter table public.products add column if not exists pref_lead_time  text;
+alter table public.products add column if not exists pref_price      text;
+alter table public.products add column if not exists sec_supplier    text;
+alter table public.products add column if not exists sec_moq         text;
+alter table public.products add column if not exists sec_lead_time   text;
+alter table public.products add column if not exists sec_price       text;
+alter table public.products add column if not exists pack_size       text;
+alter table public.products add column if not exists pack_weight     text;
+alter table public.products add column if not exists dormant         boolean not null default false;
+
+-- ---------------------------------------------------------
 -- Every book-in / book-out / stock-take, forever
 -- ---------------------------------------------------------
 create table if not exists public.movements (
