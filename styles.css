@@ -445,4 +445,36 @@ img { display: block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .skeleton { background: var(--bg-elevated); border-radius: var(--r-lg); height: 76px; margin-bottom: 8px; opacity: 0.6; }
 
+/* ---------- Printable Kanban card (60mm x 85mm) ---------- */
+.print-area { display: flex; justify-content: center; padding: 8px 0 4px; }
+.kcard {
+  width: 60mm; height: 85mm; border: 0.3mm solid #000; background: #fff; color: #000;
+  display: flex; flex-direction: column; overflow: hidden; font-family: var(--sans); flex-shrink: 0;
+}
+.kcard-header {
+  background: #0a84ff; color: #fff; font-weight: 800; font-size: 3.2mm; line-height: 1.15;
+  padding: 2mm 1.5mm; text-align: center; flex-shrink: 0;
+}
+.kcard-visual { display: flex; align-items: flex-start; gap: 1.5mm; padding: 1.5mm; flex-shrink: 0; }
+.kcard-qr { width: 13mm; height: 13mm; flex-shrink: 0; }
+.kcard-qr svg { width: 100%; height: 100%; display: block; }
+.kcard-qr-fallback {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  border: 0.2mm dashed #999; color: #999; font-size: 2.4mm;
+}
+.kcard-photo { flex: 1; height: 22mm; object-fit: cover; border: 0.2mm solid #ccc; border-radius: 1mm; min-width: 0; }
+.kcard-photo-ph { display: flex; align-items: center; justify-content: center; color: #999; font-size: 2.4mm; background: #f2f2f2; }
+.kcard-fields { flex: 1; display: flex; flex-direction: column; font-size: 2.7mm; overflow: hidden; }
+.kcard-row { display: flex; justify-content: space-between; align-items: baseline; gap: 1.5mm; padding: 1mm 1.5mm; border-top: 0.2mm solid #ddd; }
+.kcard-k { color: #666; flex-shrink: 0; }
+.kcard-v { font-weight: 700; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+@media print {
+  .no-print { display: none !important; }
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: fixed; left: 0; top: 0; padding: 0; }
+  @page { size: 60mm 85mm; margin: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

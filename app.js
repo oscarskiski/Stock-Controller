@@ -74,7 +74,8 @@ const I = {
   count: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>',
   target: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg>',
   reorder: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="9.5" y="4" width="5" height="10" rx="1.5"/><rect x="16" y="4" width="5" height="13" rx="1.5"/></svg>',
-  truck: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>'
+  truck: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>',
+  print: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M6 14h12v7H6z"/></svg>'
 };
 
 /* ===================== Small utils ===================== */
@@ -1113,7 +1114,10 @@ function renderProductDetail(p) {
     '</div>' +
     '<button class="link-btn" data-more type="button" style="margin-bottom:6px;">' + (detailMore ? '− Hide' : '+ Show') + ' cost, supplier &amp; pack details</button>' +
     morePanel +
-    '<button class="sheet-cancel" data-count type="button" style="width:100%;border-radius:999px;font-weight:700;margin-bottom:14px;">Set count (stock take)</button>' +
+    '<div class="sheet-actions" style="margin-top:0;margin-bottom:14px;">' +
+      '<button class="sheet-cancel" data-count type="button" style="border-radius:999px;font-weight:700;">Set count</button>' +
+      '<button class="sheet-cancel" data-printcard type="button" style="border-radius:999px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:6px;">' + I.print + ' Print card</button>' +
+    '</div>' +
     (recent.length ? '<div class="field-label">Last movements</div><div class="group" style="margin-bottom:12px;">' +
       recent.map(m => {
         const d = num(m.delta);
@@ -1134,6 +1138,59 @@ function renderProductDetail(p) {
   sheetEl.querySelector('[data-count]').addEventListener('click', () => openMoveSheet(p.id, 'set'));
   sheetEl.querySelector('[data-edit]').addEventListener('click', () => openItemForm(p));
   sheetEl.querySelector('[data-more]').addEventListener('click', () => { detailMore = !detailMore; renderProductDetail(productById(p.id) || p); });
+  sheetEl.querySelector('[data-printcard]').addEventListener('click', () => openPrintCardSheet(p));
+}
+
+/* ===================== Printable Kanban card ===================== */
+/** Where a scanned card should send a phone: this same app, opened straight
+    to the item. index.html reads ?item=<id> on boot and jumps to it. */
+function itemDeepLink(p) {
+  const url = new URL(location.href);
+  url.search = ''; url.hash = '';
+  url.searchParams.set('item', p.id);
+  return url.toString();
+}
+
+function openPrintCardSheet(p) {
+  let qrSvg = '';
+  try { qrSvg = QR.toSvg(itemDeepLink(p), { dark: '#000' }); }
+  catch (e) { qrSvg = ''; }
+
+  const moq = parseAmountUnit(p.pref_moq, p.unit);
+  const rows = [
+    ['Item#', orDash(p.code)],
+    ['Re-Order', fmtQty(p.min_qty) + ' ' + (p.unit || 'ea')],
+    ['MOQ', moq.qty ? escapeHtml(moq.qty + ' ' + moq.unit) : '—'],
+    ['Supplier', orDash(p.pref_supplier)],
+    ['Lead Time', orDash(p.pref_lead_time)],
+    ['Store', orDash(p.location)]
+  ];
+
+  sheetEl.innerHTML =
+    '<div class="sheet-handle no-print"></div>' +
+    '<div class="sheet-title no-print">Print card</div>' +
+    '<div class="sheet-sub no-print">60 &times; 85mm. Turn off "Fit to page" / "Scale" in the print dialog so it comes out true size.</div>' +
+    '<div class="print-area">' +
+      '<div class="kcard">' +
+        '<div class="kcard-header">' + escapeHtml(p.name) + '</div>' +
+        '<div class="kcard-visual">' +
+          '<div class="kcard-qr">' + (qrSvg || '<span class="kcard-qr-fallback">QR</span>') + '</div>' +
+          (p.photo_url ? '<img class="kcard-photo" src="' + escapeHtml(p.photo_url) + '" alt="">' : '<div class="kcard-photo kcard-photo-ph">No photo</div>') +
+        '</div>' +
+        '<div class="kcard-fields">' +
+          rows.map(([k, v]) => '<div class="kcard-row"><span class="kcard-k">' + k + '</span><span class="kcard-v">' + v + '</span></div>').join('') +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="sheet-actions no-print">' +
+      '<button class="sheet-cancel" data-close type="button">Close</button>' +
+      '<button class="sheet-save" data-doprint type="button">' + I.print + ' Print</button>' +
+    '</div>' +
+    (qrSvg ? '' : '<div class="status-line no-print">Could not generate a QR code for this item — the card will still print without one.</div>');
+
+  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+  sheetEl.querySelector('[data-doprint]').addEventListener('click', () => window.print());
+  openSheet();
 }
 
 /* ===================== Move sheet (book in / out / set) ===================== */
@@ -1751,10 +1808,25 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && !s
   render();
   await DB.init();
   await refresh();
-  if (!state.me) openPersonSheet();
+
+  // A scanned Kanban card lands here as ?item=<id> — jump straight to it,
+  // then scrub the URL so refreshing the page later doesn't reopen it.
+  const deepLinkId = new URLSearchParams(location.search).get('item');
+  if (deepLinkId) history.replaceState(null, '', location.pathname);
+
+  if (!state.me) {
+    openPersonSheet(deepLinkId ? () => openDeepLinkedItem(deepLinkId) : undefined);
+  } else if (deepLinkId) {
+    openDeepLinkedItem(deepLinkId);
+  }
+
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
 })();
+function openDeepLinkedItem(id) {
+  if (productById(id)) openProductDetail(id);
+  else toast('That item was not found');
+}
 
 })();
