@@ -416,6 +416,12 @@ img { display: block; }
 .form-field-pair { display: flex; gap: 12px; padding: 10px 0; border-top: 0.5px solid var(--separator); }
 .form-field-pair:first-child { border-top: none; }
 .form-field-pair .form-field { flex: 1; padding: 0; border: none; }
+/* Currency symbol sitting directly against the number, not just mentioned
+   in the label above it where it's easy to miss. */
+.money-row { display: flex; align-items: center; gap: 5px; }
+.money-sym { color: var(--label-secondary); font-size: 15px; font-weight: 700; flex-shrink: 0; }
+.money-row input { flex: 1; }
+
 .chip-wrap { display: flex; gap: 6px; flex-wrap: wrap; margin: -2px 0 10px; }
 .pill-sm { padding: 6px 12px; font-size: 12px; font-weight: 600; }
 .dormant-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; }

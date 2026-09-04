@@ -130,6 +130,7 @@ function locSortKey(loc) {
 const CATEGORIES = ['Parts', 'Assembled', 'Raw materials'];
 const UNITS = ['ea', 'set', 'pair', 'box', 'pack', 'sheet', 'roll', 'm', 'm²', 'kg', 'litre'];
 const LEAD_UNITS = ['days', 'wks', 'months'];
+const WEIGHT_UNITS = ['kg', 'g', 'lb'];
 
 /* ---- amount+unit fields (MOQ, lead time, cost/price): stored as one text
    column each ("500 ea", "3 wks", "£7.90") but edited as a proper numeric
@@ -1050,6 +1051,8 @@ function openItemForm(existing) {
   const secMoq = parseAmountUnit(p.sec_moq, unit);
   const prefLead = parseAmountUnit(p.pref_lead_time, 'wks');
   const secLead = parseAmountUnit(p.sec_lead_time, 'wks');
+  const packSize = parseAmountUnit(p.pack_size, unit);
+  const packWeight = parseAmountUnit(p.pack_weight, 'kg');
   itemDraft = {
     id: p.id || null,
     name: p.name || '', code: p.code || '', notes: p.notes || '',
@@ -1064,7 +1067,9 @@ function openItemForm(existing) {
     sec_moq_qty: secMoq.qty, sec_moq_unit: secMoq.unit,
     sec_lead_qty: secLead.qty, sec_lead_unit: secLead.unit,
     sec_price: parseMoney(p.sec_price),
-    pack_size: p.pack_size || '', pack_weight: p.pack_weight || '', dormant: !!p.dormant,
+    pack_size_qty: packSize.qty, pack_size_unit: packSize.unit,
+    pack_weight_qty: packWeight.qty, pack_weight_unit: packWeight.unit,
+    dormant: !!p.dormant,
     photo_url: p.photo_url || '', photoBlob: null
   };
   renderItemForm();
@@ -1093,6 +1098,18 @@ function formFieldHtml(id, label, value, opts) {
     '<' + tag + ' id="' + id + '" data-ff="' + id + '" ' + attrs + valAttr +
     (opts.placeholder ? ' placeholder="' + escapeHtml(opts.placeholder) + '"' : '') +
     (opts.mono ? ' style="font-family:ui-monospace,Menlo,monospace;"' : '') + '>' + inner + '</' + tag + '></label>';
+}
+
+/** A numeric field with the currency symbol sitting right against the input
+    (not just mentioned in the label above it, which was easy to miss) —
+    used for Cost and both supplier Price fields. */
+function moneyFieldHtml(id, label, value) {
+  const sym = (CFG.CURRENCY_SYMBOL || '').trim();
+  return '<label class="form-field"><div class="ff-label">' + label + '</div>' +
+    '<div class="money-row">' +
+      (sym ? '<span class="money-sym">' + escapeHtml(sym) + '</span>' : '') +
+      '<input id="' + id + '" data-ff="' + id + '" type="number" inputmode="decimal" min="0" step="0.01" value="' + escapeHtml(value) + '" placeholder="0.00">' +
+    '</div></label>';
 }
 
 /** A number field paired with a unit select — used for MOQ ("500 ea") and
@@ -1148,7 +1165,7 @@ function renderItemForm() {
         '<label class="form-field"><div class="ff-label">Unit</div><select id="fUnit" data-ff="fUnit">' + UNITS.map(u => '<option value="' + u + '" ' + (d.unit === u ? 'selected' : '') + '>' + u + '</option>').join('') + '</select></label>' +
       '</div>' +
       formFieldHtml('fMin', 'Reorder qty (min stock)', d.min_qty, { type: 'number', inputmode: 'decimal', placeholder: 'Warn when stock drops below this' }) +
-      formFieldHtml('fCost', 'Cost (budget price)' + (CFG.CURRENCY_SYMBOL ? ' (' + CFG.CURRENCY_SYMBOL + ')' : ''), d.cost, { type: 'number', inputmode: 'decimal', placeholder: '0.00' }) +
+      moneyFieldHtml('fCost', 'Cost (budget price)', d.cost) +
     '</div>' +
 
     '<div class="form-section-label">Location</div>' +
@@ -1172,7 +1189,7 @@ function renderItemForm() {
       formFieldHtml('fPrefSupplier', 'Supplier', d.pref_supplier, { placeholder: 'Supplier name' }) +
       qtyUnitPairHtml('fPrefMoqQty', 'MOQ', 'fPrefMoqUnit', 'Unit', d.pref_moq_qty, d.pref_moq_unit, UNITS) +
       qtyUnitPairHtml('fPrefLeadQty', 'Lead time', 'fPrefLeadUnit', 'Period', d.pref_lead_qty, d.pref_lead_unit, LEAD_UNITS) +
-      formFieldHtml('fPrefPrice', 'Price' + (CFG.CURRENCY_SYMBOL ? ' (' + CFG.CURRENCY_SYMBOL + ')' : ''), d.pref_price, { type: 'number', inputmode: 'decimal', placeholder: '0.00' }) +
+      moneyFieldHtml('fPrefPrice', 'Price', d.pref_price) +
     '</div>' +
 
     '<div class="form-section-label">Secondary supplier</div>' +
@@ -1180,12 +1197,13 @@ function renderItemForm() {
       formFieldHtml('fSecSupplier', 'Supplier', d.sec_supplier, { placeholder: 'Supplier name (optional)' }) +
       qtyUnitPairHtml('fSecMoqQty', 'MOQ', 'fSecMoqUnit', 'Unit', d.sec_moq_qty, d.sec_moq_unit, UNITS) +
       qtyUnitPairHtml('fSecLeadQty', 'Lead time', 'fSecLeadUnit', 'Period', d.sec_lead_qty, d.sec_lead_unit, LEAD_UNITS) +
-      formFieldHtml('fSecPrice', 'Price' + (CFG.CURRENCY_SYMBOL ? ' (' + CFG.CURRENCY_SYMBOL + ')' : ''), d.sec_price, { type: 'number', inputmode: 'decimal', placeholder: '0.00' }) +
+      moneyFieldHtml('fSecPrice', 'Price', d.sec_price) +
     '</div>' +
 
     '<div class="form-section-label">Packing &amp; status</div>' +
     '<div class="form-card">' +
-      '<div class="form-field-pair">' + formFieldHtml('fPackSize', 'Pack size', d.pack_size, { placeholder: 'e.g. 50 ea/box' }) + formFieldHtml('fPackWeight', 'Pack weight', d.pack_weight, { placeholder: 'e.g. 18 kg' }) + '</div>' +
+      qtyUnitPairHtml('fPackSizeQty', 'Pack size', 'fPackSizeUnit', 'Unit', d.pack_size_qty, d.pack_size_unit, UNITS) +
+      qtyUnitPairHtml('fPackWeightQty', 'Pack weight', 'fPackWeightUnit', 'Unit', d.pack_weight_qty, d.pack_weight_unit, WEIGHT_UNITS) +
       '<div class="dormant-row"><span class="fname">Dormant</span><div class="segmented segmented-sm">' +
         '<button class="seg-btn ' + (!d.dormant ? 'active' : '') + '" data-dormant="0" type="button">No</button>' +
         '<button class="seg-btn ' + (d.dormant ? 'active' : '') + '" data-dormant="1" type="button">Yes</button>' +
@@ -1205,7 +1223,9 @@ function renderItemForm() {
       fPrefMoqQty: 'pref_moq_qty', fPrefMoqUnit: 'pref_moq_unit', fPrefLeadQty: 'pref_lead_qty', fPrefLeadUnit: 'pref_lead_unit',
       fPrefPrice: 'pref_price', fSecSupplier: 'sec_supplier',
       fSecMoqQty: 'sec_moq_qty', fSecMoqUnit: 'sec_moq_unit', fSecLeadQty: 'sec_lead_qty', fSecLeadUnit: 'sec_lead_unit',
-      fSecPrice: 'sec_price', fPackSize: 'pack_size', fPackWeight: 'pack_weight' };
+      fSecPrice: 'sec_price',
+      fPackSizeQty: 'pack_size_qty', fPackSizeUnit: 'pack_size_unit',
+      fPackWeightQty: 'pack_weight_qty', fPackWeightUnit: 'pack_weight_unit' };
     if (map[key]) d[map[key]] = e.value;
   }));
   ['lBay', 'lLevel', 'lPos'].forEach((id, i) => {
@@ -1314,7 +1334,8 @@ async function saveItem() {
       sec_moq: formatAmountUnit(d.sec_moq_qty, d.sec_moq_unit),
       sec_lead_time: formatAmountUnit(d.sec_lead_qty, d.sec_lead_unit),
       sec_price: formatMoney(d.sec_price),
-      pack_size: (d.pack_size || '').trim() || null, pack_weight: (d.pack_weight || '').trim() || null,
+      pack_size: formatAmountUnit(d.pack_size_qty, d.pack_size_unit),
+      pack_weight: formatAmountUnit(d.pack_weight_qty, d.pack_weight_unit),
       dormant: !!d.dormant, photo_url: photoUrl || null
     };
     if (d.id) {
