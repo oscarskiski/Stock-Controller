@@ -63,6 +63,37 @@ alter table public.products add column if not exists pack_weight     text;
 alter table public.products add column if not exists dormant         boolean not null default false;
 
 -- ---------------------------------------------------------
+-- Reorder board — a Kanban-style signal card per item that needs
+-- ordering. Cards move to_order -> ordered -> received; at most one
+-- OPEN (non-received) card per product, enforced below, so tapping
+-- "Order" twice can't create duplicate cards for the same item.
+-- ---------------------------------------------------------
+create table if not exists public.reorder_cards (
+  id           uuid primary key default gen_random_uuid(),
+  product_id   uuid not null references public.products(id) on delete cascade,
+  status       text not null default 'to_order',  -- 'to_order' | 'ordered' | 'received'
+  qty          numeric not null default 0,
+  supplier     text,
+  note         text,
+  created_at   timestamptz not null default now(),
+  created_by   text,
+  ordered_at   timestamptz,
+  ordered_by   text,
+  received_at  timestamptz,
+  received_by  text
+);
+
+create index if not exists reorder_cards_status_idx  on public.reorder_cards (status);
+create index if not exists reorder_cards_product_idx on public.reorder_cards (product_id);
+create unique index if not exists reorder_cards_open_unique
+  on public.reorder_cards (product_id) where status <> 'received';
+
+alter table public.reorder_cards enable row level security;
+drop policy if exists reorder_cards_all on public.reorder_cards;
+create policy reorder_cards_all on public.reorder_cards for all to anon, authenticated using (true) with check (true);
+grant all on public.reorder_cards to anon, authenticated;
+
+-- ---------------------------------------------------------
 -- Every book-in / book-out / stock-take, forever
 -- ---------------------------------------------------------
 create table if not exists public.movements (

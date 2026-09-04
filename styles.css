@@ -195,10 +195,16 @@ img { display: block; }
 }
 .tab-btn {
   background: none; border: none; color: var(--label-tertiary); display: flex; flex-direction: column;
-  align-items: center; gap: 3px; padding: 4px 10px; cursor: pointer; position: relative; flex: 1; max-width: 110px;
+  align-items: center; gap: 3px; padding: 4px 3px; cursor: pointer; position: relative; flex: 1; max-width: 96px; min-width: 0;
 }
 .tab-btn.active { color: var(--sys-blue); }
-.tab-btn .tlabel { font-size: 10.5px; font-weight: 600; }
+/* max-width is a fixed px value, not a percentage: .tab-btn uses
+   align-items:center (column direction), so each child sizes to its own
+   intrinsic width regardless of the parent's box — a percentage here
+   would resolve against that intrinsic width too and never actually
+   constrain anything. 54px is the narrowest six-tab column this app sees
+   (iPhone SE width). */
+.tab-btn .tlabel { font-size: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 54px; }
 .tab-badge {
   position: absolute; top: -1px; right: 12px; background: var(--sys-orange); color: #000; font-size: 10px; font-weight: 800;
   min-width: 16px; height: 16px; border-radius: 8px; display: flex; align-items: center; justify-content: center; padding: 0 3px;
@@ -386,12 +392,14 @@ img { display: block; }
 /* ---------- Reusable inline link button (Report / See all / Show details) ---------- */
 .link-btn { background: none; border: none; cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--sys-blue); padding: 0; }
 
-/* ---------- Home: reorder row ---------- */
+/* ---------- Home / Reorder board: card action buttons ---------- */
 .order-btn {
   border: none; cursor: pointer; background: rgba(10,132,255,0.16); color: var(--sys-blue); border-radius: var(--r-pill);
   padding: 8px 15px; font-size: 13px; font-weight: 700; flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 5px;
 }
 .order-btn:active { transform: scale(0.95); }
+.order-btn:disabled { opacity: 0.5; }
 
 /* ---------- Items screen ---------- */
 .new-item-btn {

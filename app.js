@@ -72,7 +72,9 @@ const I = {
   gear: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 13.5a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.04 1.56V19.6a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.04-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.04H4.4a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.04 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H10.5A1.7 1.7 0 0 0 11.5 4.4V4.3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.04 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.02a1.7 1.7 0 0 0 1.56 1.04h.09a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.56 1.04z"/></svg>',
   bolt: '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M13 2 3 14h7l-1 8 11-14h-8l1-6z"/></svg>',
   count: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>',
-  target: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg>'
+  target: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg>',
+  reorder: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="9.5" y="4" width="5" height="10" rx="1.5"/><rect x="16" y="4" width="5" height="13" rx="1.5"/></svg>',
+  truck: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>'
 };
 
 /* ===================== Small utils ===================== */
@@ -163,6 +165,7 @@ const state = {
   products: [],
   movements: [],
   people: [],
+  reorderCards: [],
   me: localStorage.getItem('ys_me') || '',
   q: '',
   cat: 'All',
@@ -207,12 +210,13 @@ function movementProductName(m) {
 async function refresh(showSpinner) {
   if (showSpinner) { state.loading = true; render(); }
   try {
-    const [products, movements, people] = await Promise.all([
-      DB.listProducts(), DB.listMovements(300), DB.listPeople()
+    const [products, movements, people, cards] = await Promise.all([
+      DB.listProducts(), DB.listMovements(300), DB.listPeople(), DB.listReorderCards()
     ]);
     state.products = products || [];
     state.movements = movements || [];
     state.people = people || [];
+    state.reorderCards = cards || [];
     state.error = '';
   } catch (e) {
     state.error = e && e.message ? e.message : 'Could not load stock';
@@ -221,12 +225,27 @@ async function refresh(showSpinner) {
   render();
 }
 
+/* ---- reorder-card helpers ---- */
+function cardProductName(c) {
+  if (c.products && c.products.name) return c.products.name;
+  const p = productById(c.product_id);
+  return p ? p.name : 'Deleted item';
+}
+function openCardFor(productId) { return state.reorderCards.find(c => c.product_id === productId && c.status !== 'received'); }
+/** Order enough to clear the shortfall, but never less than the supplier's MOQ. */
+function suggestReorderQty(p) {
+  const shortfall = Math.max(0, num(p.min_qty) - num(p.qty));
+  const moq = num(parseAmountUnit(p.pref_moq, '').qty);
+  return Math.max(shortfall || num(p.min_qty) || 1, moq);
+}
+
 /* ===================== Header & tabs ===================== */
 const TABS = [
   { id: 'home', label: 'Home', icon: I.home },
   { id: 'stock', label: 'Stock', icon: I.box },
   { id: 'locations', label: 'Racks', icon: I.rack },
   { id: 'items', label: 'Items', icon: I.items },
+  { id: 'reorder', label: 'Order', icon: I.reorder },
   { id: 'activity', label: 'Log', icon: I.activity }
 ];
 
@@ -238,6 +257,7 @@ function renderHeader() {
     stock: ['Stock', state.products.length + ' line' + (state.products.length === 1 ? '' : 's')],
     locations: ['Racks', rackLetters.length ? rackLetters.join(', ') + ' · tap to open a bay' : 'Browse by rack'],
     items: ['Items', state.products.length + ' item' + (state.products.length === 1 ? '' : 's') + ' · manage catalogue'],
+    reorder: ['Reorder', 'The signal board — what to buy, and where it is'],
     activity: ['Log', 'Every movement, permanently']
   };
   const [t, s] = titles[state.screen] || titles.home;
@@ -255,9 +275,12 @@ function renderHeader() {
 
 function renderTabs() {
   const lowCount = activeProducts().filter(needsAttention).length;
+  const toOrderCount = state.reorderCards.filter(c => c.status === 'to_order').length;
   $('tabbar').innerHTML = TABS.map(tab => {
-    const badge = (tab.id === 'stock' && lowCount)
-      ? '<span class="tab-badge">' + (lowCount > 99 ? '99+' : lowCount) + '</span>' : '';
+    let n = 0;
+    if (tab.id === 'stock') n = lowCount;
+    else if (tab.id === 'reorder') n = toOrderCount;
+    const badge = n ? '<span class="tab-badge">' + (n > 99 ? '99+' : n) + '</span>' : '';
     return '<button class="tab-btn ' + (state.screen === tab.id ? 'active' : '') + '" data-tab="' + tab.id + '" type="button">' +
              tab.icon + badge + '<span class="tlabel">' + tab.label + '</span></button>';
   }).join('');
@@ -283,6 +306,7 @@ function render() {
   else if (state.screen === 'stock') html += stockScreenHtml();
   else if (state.screen === 'locations') html += locationsScreenHtml();
   else if (state.screen === 'items') html += itemsScreenHtml();
+  else if (state.screen === 'reorder') html += reorderScreenHtml();
   else html += activityScreenHtml();
   el.innerHTML = html;
 
@@ -291,6 +315,7 @@ function render() {
   else if (state.screen === 'stock') wireStock(el);
   else if (state.screen === 'locations') wireLocations(el);
   else if (state.screen === 'items') wireItems(el);
+  else if (state.screen === 'reorder') wireReorder(el);
   else wireActivity(el);
 }
 
@@ -355,10 +380,14 @@ function homeScreenHtml() {
   } else {
     html += attention.map(p => {
       const shortfall = isZero(p) ? 'Out of stock' : 'Short ' + fmtQty(num(p.min_qty) - num(p.qty)) + ' ' + (p.unit || 'ea');
+      const card = openCardFor(p.id);
+      const action = card
+        ? '<span class="meta-chip' + (card.status === 'ordered' ? ' cat' : '') + '">' + (card.status === 'ordered' ? 'On order' : 'On board') + '</span>'
+        : '<button class="order-btn" data-order="' + p.id + '" type="button">Order</button>';
       return '<div class="row"><div class="row-body" data-open="' + p.id + '">' +
         '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
         '<div class="row-meta">' + (p.location ? '<span class="meta-chip loc">' + escapeHtml(p.location) + '</span>' : '') + '<span>' + shortfall + '</span></div>' +
-        '</div><button class="order-btn" data-order="' + p.id + '" type="button">Order</button></div>';
+        '</div>' + action + '</div>';
     }).join('');
   }
   html += '</div>';
@@ -366,10 +395,22 @@ function homeScreenHtml() {
 }
 function wireHome(el) {
   el.querySelectorAll('[data-open]').forEach(b => b.addEventListener('click', () => openProductDetail(b.getAttribute('data-open'))));
-  el.querySelectorAll('[data-order]').forEach(b => b.addEventListener('click', (e) => {
+  el.querySelectorAll('[data-order]').forEach(b => b.addEventListener('click', async (e) => {
     e.stopPropagation();
     const p = productById(b.getAttribute('data-order'));
-    toast('Flagged for reorder · ' + (p ? p.name : ''), 'good');
+    if (!p) return;
+    b.disabled = true;
+    try {
+      await DB.createReorderCard({
+        product_id: p.id, status: 'to_order', qty: suggestReorderQty(p),
+        supplier: p.pref_supplier || null, created_by: state.me || null
+      });
+      await refresh();
+      toast('Added to reorder board · ' + p.name, 'good');
+    } catch (err) {
+      b.disabled = false;
+      toast(err.message || 'Could not add', 'bad');
+    }
   }));
   const goReport = el.querySelector('[data-goreport]');
   if (goReport) goReport.addEventListener('click', () => { state.screen = 'stock'; state.cat = 'Low stock'; render(); });
@@ -650,6 +691,206 @@ function wireItems(el) {
     const p = productById(b.getAttribute('data-edit'));
     if (p) openItemForm(p);
   }));
+}
+
+/* ===================== REORDER screen (Kanban signal board) ===================== */
+const CARD_STATUS_LABEL = { to_order: 'To order', ordered: 'Ordered', received: 'Received' };
+
+function reorderScreenHtml() {
+  const toOrder = state.reorderCards.filter(c => c.status === 'to_order').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  const ordered = state.reorderCards.filter(c => c.status === 'ordered').sort((a, b) => (a.ordered_at || '').localeCompare(b.ordered_at || ''));
+  const received = state.reorderCards.filter(c => c.status === 'received').sort((a, b) => (b.received_at || '').localeCompare(a.received_at || '')).slice(0, 15);
+
+  let html = '<button class="new-item-btn" id="newCardBtn" type="button">' + I.plus + '<span>Add item to board</span></button>';
+
+  html += reorderColumnHtml('To order', toOrder, cardToOrderRowHtml, 'Nothing waiting to be ordered. Cards appear here automatically from low stock, or add one yourself.');
+  html += reorderColumnHtml('Ordered — awaiting delivery', ordered, cardOrderedRowHtml, 'Nothing on order right now.');
+  if (received.length) html += reorderColumnHtml('Recently received', received, cardReceivedRowHtml, '');
+
+  return html;
+}
+function reorderColumnHtml(title, cards, rowFn, emptyText) {
+  let html = '<div class="section-title">' + title + (cards.length ? ' &nbsp;·&nbsp; ' + cards.length : '') + '</div><div class="group">';
+  html += cards.length ? cards.map(rowFn).join('') : ('<div class="empty-note">' + emptyText + '</div>');
+  html += '</div>';
+  return html;
+}
+function cardMetaBits(c, p) {
+  const bits = [];
+  if (p && p.location) bits.push('<span class="meta-chip loc">' + escapeHtml(p.location) + '</span>');
+  bits.push('<span>' + fmtQty(c.qty) + ' ' + escapeHtml((p && p.unit) || 'ea') + '</span>');
+  if (c.supplier) bits.push('<span>' + escapeHtml(c.supplier) + '</span>');
+  return bits.join('');
+}
+function cardToOrderRowHtml(c) {
+  const p = productById(c.product_id);
+  return '<div class="row"><div class="row-body" data-card="' + c.id + '">' +
+    '<div class="row-title">' + escapeHtml(cardProductName(c)) + '</div>' +
+    '<div class="row-meta">' + cardMetaBits(c, p) + '</div>' +
+    '</div><button class="order-btn" data-markordered="' + c.id + '" type="button">Mark ordered</button></div>';
+}
+function cardOrderedRowHtml(c) {
+  const p = productById(c.product_id);
+  return '<div class="row"><div class="row-body" data-card="' + c.id + '">' +
+    '<div class="row-title">' + escapeHtml(cardProductName(c)) + '</div>' +
+    '<div class="row-meta">' + cardMetaBits(c, p) + '<span>ordered ' + fmtWhen(c.ordered_at) + (c.ordered_by ? ' · ' + escapeHtml(c.ordered_by) : '') + '</span></div>' +
+    '</div><button class="order-btn" data-markreceived="' + c.id + '" type="button">' + I.truck + ' Received</button></div>';
+}
+function cardReceivedRowHtml(c) {
+  const p = productById(c.product_id);
+  return '<div class="row"><div class="row-body" data-card="' + c.id + '" style="opacity:.6;">' +
+    '<div class="row-title">' + escapeHtml(cardProductName(c)) + '</div>' +
+    '<div class="row-meta">' + cardMetaBits(c, p) + '<span>received ' + fmtWhen(c.received_at) + (c.received_by ? ' · ' + escapeHtml(c.received_by) : '') + '</span></div>' +
+    '</div></div>';
+}
+function wireReorder(el) {
+  const nb = el.querySelector('#newCardBtn');
+  if (nb) nb.addEventListener('click', openNewReorderPicker);
+  el.querySelectorAll('[data-card]').forEach(b => b.addEventListener('click', () => {
+    const c = state.reorderCards.find(x => x.id === b.getAttribute('data-card'));
+    if (c) openReorderCardSheet(c);
+  }));
+  el.querySelectorAll('[data-markordered]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); markCardOrdered(b.getAttribute('data-markordered')); }));
+  el.querySelectorAll('[data-markreceived]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); markCardReceived(b.getAttribute('data-markreceived')); }));
+}
+
+async function markCardOrdered(id) {
+  if (!state.me) { openPersonSheet(() => markCardOrdered(id)); return; }
+  const c = state.reorderCards.find(x => x.id === id);
+  if (!c) return;
+  try {
+    await DB.updateReorderCard(id, { status: 'ordered', ordered_at: new Date().toISOString(), ordered_by: state.me });
+    await refresh();
+    toast('Marked ordered · ' + cardProductName(c), 'good');
+  } catch (e) { toast(e.message || 'Could not update', 'bad'); }
+}
+async function markCardReceived(id) {
+  if (!state.me) { openPersonSheet(() => markCardReceived(id)); return; }
+  const c = state.reorderCards.find(x => x.id === id);
+  if (!c) return;
+  try {
+    await DB.updateReorderCard(id, { status: 'received', received_at: new Date().toISOString(), received_by: state.me });
+    await refresh();
+    toast('Marked received · ' + cardProductName(c), 'good');
+    // Receiving stock is naturally followed by booking it in — jump straight there, pre-filled.
+    if (productById(c.product_id)) {
+      moveCtx = { id: c.product_id, dir: 'in', amount: num(c.qty) || 1, target: 0, note: 'Reorder delivery' };
+      renderMoveSheet();
+      openSheet();
+    }
+  } catch (e) { toast(e.message || 'Could not update', 'bad'); }
+}
+
+/* ---- reorder card detail/edit sheet ---- */
+function openReorderCardSheet(c) {
+  const p = productById(c.product_id);
+  const editable = c.status !== 'received';
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    (p && p.photo_url ? '<img class="photo-hero" src="' + escapeHtml(p.photo_url) + '" alt="">' : '') +
+    '<div class="sheet-title">' + escapeHtml(cardProductName(c)) + '</div>' +
+    '<div class="sheet-sub">' + CARD_STATUS_LABEL[c.status] + (p && p.location ? ' · ' + escapeHtml(p.location) : '') + '</div>' +
+    (p ? '<div class="detail-qty ' + qtyClass(p) + '" style="margin-bottom:10px;"><span class="dq">' + fmtQty(p.qty) + '</span><span class="du">' + escapeHtml(p.unit || 'ea') + ' currently in stock</span></div>' : '') +
+    '<div class="form-card">' +
+      (editable
+        ? '<label class="form-field"><div class="ff-label">Qty to order</div><input id="cQty" type="number" inputmode="decimal" min="0" value="' + fmtQty(c.qty) + '"></label>' +
+          '<label class="form-field"><div class="ff-label">Supplier</div><input id="cSupplier" type="text" value="' + escapeHtml(c.supplier || '') + '" placeholder="Supplier name"></label>' +
+          '<label class="form-field"><div class="ff-label">Note</div><input id="cNote" type="text" value="' + escapeHtml(c.note || '') + '" placeholder="Job, order ref…"></label>'
+        : '<div class="field-row"><span class="fname">Qty ordered</span><span class="field-val">' + fmtQty(c.qty) + ' ' + escapeHtml((p && p.unit) || 'ea') + '</span></div>' +
+          (c.supplier ? '<div class="field-row"><span class="fname">Supplier</span><span class="field-val">' + escapeHtml(c.supplier) + '</span></div>' : '')) +
+    '</div>' +
+    (c.status !== 'to_order' ? '<div class="field-group" style="margin-bottom:12px;">' +
+      (c.ordered_at ? '<div class="field-row"><span class="fname">Ordered</span><span class="field-val">' + fmtWhen(c.ordered_at) + (c.ordered_by ? ' · ' + escapeHtml(c.ordered_by) : '') + '</span></div>' : '') +
+      (c.received_at ? '<div class="field-row"><span class="fname">Received</span><span class="field-val">' + fmtWhen(c.received_at) + (c.received_by ? ' · ' + escapeHtml(c.received_by) : '') + '</span></div>' : '') +
+    '</div>' : '') +
+    '<div class="sheet-actions">' +
+      '<button class="sheet-cancel" data-close type="button">Close</button>' +
+      '<button class="sheet-delete" data-remove type="button">' + I.trash + '</button>' +
+      (editable ? '<button class="sheet-save" data-save type="button">Save</button>' : '') +
+    '</div>';
+
+  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+  sheetEl.querySelector('[data-remove]').addEventListener('click', async () => {
+    if (!confirm('Remove this card from the reorder board?')) return;
+    try { await DB.deleteReorderCard(c.id); closeSheet(); await refresh(); toast('Removed from board', 'good'); }
+    catch (e) { toast(e.message || 'Could not remove', 'bad'); }
+  });
+  const saveBtn = sheetEl.querySelector('[data-save]');
+  if (saveBtn) saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+    try {
+      await DB.updateReorderCard(c.id, {
+        qty: num($('cQty').value), supplier: ($('cSupplier').value || '').trim() || null, note: ($('cNote').value || '').trim() || null
+      });
+      closeSheet();
+      await refresh();
+      toast('Saved', 'good');
+    } catch (e) {
+      saveBtn.disabled = false; saveBtn.textContent = 'Save';
+      toast(e.message || 'Could not save', 'bad');
+    }
+  });
+  openSheet();
+}
+
+/* ---- manually add a product to the board ---- */
+let reorderPickQuery = '';
+function openNewReorderPicker() {
+  reorderPickQuery = '';
+  renderReorderPicker();
+  openSheet();
+  setTimeout(() => { const i = $('reorderPickSearch'); if (i) i.focus(); }, 80);
+}
+function renderReorderPicker() {
+  const q = reorderPickQuery.trim().toLowerCase();
+  const list = activeProducts()
+    .filter(p => !openCardFor(p.id))
+    .filter(p => !q || [p.name, p.code, p.location].some(v => String(v || '').toLowerCase().includes(q)))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    .slice(0, 40);
+
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">Add to reorder board</div>' +
+    '<div class="sheet-sub">Items already on the board are hidden here.</div>' +
+    '<div class="search-row" style="background:var(--bg-elevated-2);">' +
+      '<span class="search-icon">' + I.search + '</span>' +
+      '<input type="search" id="reorderPickSearch" placeholder="Search items…" value="' + escapeHtml(reorderPickQuery) + '" autocomplete="off">' +
+    '</div>' +
+    '<div class="group">' +
+      (list.length ? list.map(p =>
+        '<div class="row"><div class="row-body" data-pickcard="' + p.id + '">' +
+          '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
+          '<div class="row-meta">' + (p.location ? '<span class="meta-chip loc">' + escapeHtml(p.location) + '</span>' : '') +
+          '<span class="meta-chip">' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + '</span></div>' +
+        '</div><span class="row-trail">' + I.chev + '</span></div>').join('')
+        : '<div class="empty-note">Nothing matches, or everything is already on the board.</div>') +
+    '</div>' +
+    '<div class="sheet-actions"><button class="sheet-cancel" data-close type="button">Cancel</button></div>';
+
+  const input = $('reorderPickSearch');
+  input.addEventListener('input', () => {
+    reorderPickQuery = input.value;
+    const pos = input.selectionStart;
+    renderReorderPicker();
+    const again = $('reorderPickSearch');
+    again.focus();
+    try { again.setSelectionRange(pos, pos); } catch (e) {}
+  });
+  sheetEl.querySelectorAll('[data-pickcard]').forEach(b => b.addEventListener('click', async () => {
+    const p = productById(b.getAttribute('data-pickcard'));
+    if (!p) return;
+    try {
+      const card = await DB.createReorderCard({
+        product_id: p.id, status: 'to_order', qty: suggestReorderQty(p),
+        supplier: p.pref_supplier || null, created_by: state.me || null
+      });
+      await refresh();
+      toast('Added to reorder board · ' + p.name, 'good');
+      openReorderCardSheet(state.reorderCards.find(x => x.id === card.id) || Object.assign({}, card, { products: p }));
+    } catch (e) { toast(e.message || 'Could not add', 'bad'); }
+  }));
+  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
 }
 
 /* ===================== LOG screen (movement history) ===================== */

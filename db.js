@@ -106,22 +106,23 @@
      ========================================================= */
   const Local = {
     mode: 'local',
-    cache: { products: [], movements: [], people: [] },
+    cache: { products: [], movements: [], people: [], reorder_cards: [] },
     ready: null,
 
-    /* Load all three keys, then assign in one go. Reading them one await at a
+    /* Load all four keys, then assign in one go. Reading them one await at a
        time left a window where a write could land between assignments and then
        be overwritten by the next stale read. Every method below waits on this,
        so nothing can touch the cache before it is filled. */
     init() {
       if (!this.ready) {
         this.ready = (async () => {
-          const [products, movements, people] = await Promise.all([
-            kvGet('local:products'), kvGet('local:movements'), kvGet('local:people')
+          const [products, movements, people, cards] = await Promise.all([
+            kvGet('local:products'), kvGet('local:movements'), kvGet('local:people'), kvGet('local:reorder_cards')
           ]);
-          this.cache.products  = products  || [];
-          this.cache.movements = movements || [];
-          this.cache.people    = people    || [];
+          this.cache.products      = products  || [];
+          this.cache.movements     = movements || [];
+          this.cache.people        = people    || [];
+          this.cache.reorder_cards = cards     || [];
         })();
       }
       return this.ready;
@@ -208,6 +209,32 @@
         fr.onerror = () => reject(fr.error);
         fr.readAsDataURL(blob);
       });
+    },
+
+    async listReorderCards() { await this.init(); return this.cache.reorder_cards; },
+    async createReorderCard(c) {
+      await this.init();
+      if (this.cache.reorder_cards.some(x => x.product_id === c.product_id && x.status !== 'received')) {
+        throw new Error('That item is already on the reorder board');
+      }
+      const row = Object.assign({ id: uuid(), status: 'to_order', qty: 0, created_at: nowIso() }, c);
+      this.cache.reorder_cards.push(row);
+      await this.persist('reorder_cards');
+      return row;
+    },
+    async updateReorderCard(id, patch) {
+      await this.init();
+      const row = this.cache.reorder_cards.find(x => x.id === id);
+      if (!row) throw new Error('Card not found');
+      Object.assign(row, patch);
+      await this.persist('reorder_cards');
+      return row;
+    },
+    async deleteReorderCard(id) {
+      await this.init();
+      this.cache.reorder_cards = this.cache.reorder_cards.filter(x => x.id !== id);
+      await this.persist('reorder_cards');
+      return true;
     }
   };
 
@@ -334,6 +361,32 @@
         throw new Error(detail || 'Photo upload failed (' + res.status + ')');
       }
       return this.base + '/storage/v1/object/public/' + bucket + '/' + path;
+    },
+
+    async listReorderCards() {
+      return await this.rest('reorder_cards?select=*,products(name,unit,location,photo_url)&order=created_at.desc');
+    },
+    async createReorderCard(c) {
+      try {
+        const rows = await this.rest('reorder_cards', {
+          method: 'POST', body: c, headers: { 'Prefer': 'return=representation' }
+        });
+        return rows[0];
+      } catch (e) {
+        // the partial unique index rejects a second open card for the same product
+        if (/duplicate key|unique/i.test(e.message || '')) throw new Error('That item is already on the reorder board');
+        throw e;
+      }
+    },
+    async updateReorderCard(id, patch) {
+      const rows = await this.rest('reorder_cards?id=eq.' + id, {
+        method: 'PATCH', body: patch, headers: { 'Prefer': 'return=representation' }
+      });
+      return rows && rows[0];
+    },
+    async deleteReorderCard(id) {
+      await this.rest('reorder_cards?id=eq.' + id, { method: 'DELETE' });
+      return true;
     }
   };
 
@@ -378,6 +431,7 @@
     listProducts()      { return this._read('products',  () => impl.listProducts()); },
     listMovements(n)    { return this._read('movements', () => impl.listMovements(n)); },
     listPeople()        { return this._read('people',    () => impl.listPeople()); },
+    listReorderCards()  { return this._read('reorder_cards', () => impl.listReorderCards()); },
 
     async _write(fn) {
       try {
@@ -396,7 +450,10 @@
     applyMovement(m)        { return this._write(() => impl.applyMovement(m)); },
     addPerson(name)         { return this._write(() => impl.addPerson(name)); },
     removePerson(id)        { return this._write(() => impl.removePerson(id)); },
-    uploadPhoto(blob, pid)  { return this._write(() => impl.uploadPhoto(blob, pid)); }
+    uploadPhoto(blob, pid)  { return this._write(() => impl.uploadPhoto(blob, pid)); },
+    createReorderCard(c)       { return this._write(() => impl.createReorderCard(c)); },
+    updateReorderCard(id, p)   { return this._write(() => impl.updateReorderCard(id, p)); },
+    deleteReorderCard(id)      { return this._write(() => impl.deleteReorderCard(id)); }
   };
 
   window.DB = DB;
