@@ -448,26 +448,52 @@ img { display: block; }
 /* ---------- Printable Kanban card (60mm x 85mm) ---------- */
 .print-area { display: flex; justify-content: center; padding: 8px 0 4px; }
 .kcard {
-  width: 60mm; height: 85mm; border: 0.3mm solid #000; background: #fff; color: #000;
+  width: 60mm; height: 85mm; border: 0.35mm solid #000; background: #fff; color: #000;
   display: flex; flex-direction: column; overflow: hidden; font-family: var(--sans); flex-shrink: 0;
 }
-.kcard-header {
-  background: #0a84ff; color: #fff; font-weight: 800; font-size: 3.2mm; line-height: 1.15;
-  padding: 2mm 1.5mm; text-align: center; flex-shrink: 0;
+/* Coloured type banner — Internal / External / Manufacture */
+.kcard-type {
+  color: #fff; font-weight: 800; font-size: 3.4mm; line-height: 1.1;
+  padding: 1.8mm 1.5mm; text-align: center; flex-shrink: 0;
 }
-.kcard-visual { display: flex; align-items: flex-start; gap: 1.5mm; padding: 1.5mm; flex-shrink: 0; }
-.kcard-qr { width: 13mm; height: 13mm; flex-shrink: 0; }
-.kcard-qr svg { width: 100%; height: 100%; display: block; }
+/* Product name band under the banner */
+.kcard-name {
+  font-weight: 700; font-size: 3mm; line-height: 1.15; text-align: center;
+  padding: 1.6mm 1.5mm; border-bottom: 0.35mm solid #000; flex-shrink: 0;
+}
+.kcard-body { flex: 1; display: flex; min-height: 0; }
+/* Left rail: photo on top, QR filling the rest, spanning the field rows */
+.kcard-left {
+  width: 23mm; flex-shrink: 0; border-right: 0.35mm solid #000;
+  display: flex; flex-direction: column; min-height: 0;
+}
+.kcard-photo { width: 100%; height: 20mm; object-fit: cover; flex-shrink: 0; border-bottom: 0.35mm solid #000; display: block; }
+.kcard-photo-ph {
+  display: flex; align-items: center; justify-content: center;
+  color: #999; font-size: 2.3mm; background: #f2f2f2;
+}
+/* QR sits just under the photo and fills the rail width — big enough to scan
+   reliably off a printed 60mm card. */
+.kcard-qr { flex: 1; min-height: 0; padding: 1mm; display: flex; align-items: flex-start; justify-content: center; }
+.kcard-qr svg { width: 21mm; height: 21mm; display: block; }
 .kcard-qr-fallback {
   width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
   border: 0.2mm dashed #999; color: #999; font-size: 2.4mm;
 }
-.kcard-photo { flex: 1; height: 22mm; object-fit: cover; border: 0.2mm solid #ccc; border-radius: 1mm; min-width: 0; }
-.kcard-photo-ph { display: flex; align-items: center; justify-content: center; color: #999; font-size: 2.4mm; background: #f2f2f2; }
-.kcard-fields { flex: 1; display: flex; flex-direction: column; font-size: 2.7mm; overflow: hidden; }
-.kcard-row { display: flex; justify-content: space-between; align-items: baseline; gap: 1.5mm; padding: 1mm 1.5mm; border-top: 0.2mm solid #ddd; }
-.kcard-k { color: #666; flex-shrink: 0; }
-.kcard-v { font-weight: 700; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Right side: label/value table, grey label cells, hard rules like the printed set */
+.kcard-fields { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.kcard-row { flex: 1; display: flex; min-height: 0; border-bottom: 0.25mm solid #000; }
+.kcard-row:last-child { border-bottom: none; }
+.kcard-k {
+  width: 13mm; flex-shrink: 0; background: #e6e6e6; border-right: 0.25mm solid #000;
+  font-size: 2.3mm; padding: 0 0.8mm; display: flex; align-items: center;
+}
+.kcard-v {
+  flex: 1; min-width: 0; font-size: 2.6mm; font-weight: 700; padding: 0 1mm;
+  display: flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.kcard-k2 { width: 8mm; border-left: 0.25mm solid #000; }
+.kcard-v2 { flex: 0 0 8mm; }
 
 @media print {
   .no-print { display: none !important; }

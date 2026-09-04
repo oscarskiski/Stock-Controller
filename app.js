@@ -1151,46 +1151,85 @@ function itemDeepLink(p) {
   return url.toString();
 }
 
-function openPrintCardSheet(p) {
+/* The three card types in use, each with its own banner colour — matching
+   the printed set: internal moves, bought-in items, and production triggers. */
+const KANBAN_TYPES = {
+  internal:    { label: 'Internal KANBAN',    color: '#6B2E1F' },
+  external:    { label: 'External KANBAN',    color: '#1E7B34' },
+  manufacture: { label: 'Manufacture KANBAN', color: '#1F5FA8' },
+  plain:       { label: '',                   color: '#B0301F' }
+};
+let kanbanType = localStorage.getItem('ys_kanban_type') || 'external';
+
+function kanbanCardHtml(p) {
+  const t = KANBAN_TYPES[kanbanType] || KANBAN_TYPES.external;
   let qrSvg = '';
-  try { qrSvg = QR.toSvg(itemDeepLink(p), { dark: '#000' }); }
-  catch (e) { qrSvg = ''; }
+  try { qrSvg = QR.toSvg(itemDeepLink(p), { dark: '#000' }); } catch (e) { qrSvg = ''; }
 
   const moq = parseAmountUnit(p.pref_moq, p.unit);
-  const rows = [
-    ['Item#', orDash(p.code)],
-    ['Re-Order', fmtQty(p.min_qty) + ' ' + (p.unit || 'ea')],
-    ['MOQ', moq.qty ? escapeHtml(moq.qty + ' ' + moq.unit) : '—'],
-    ['Supplier', orDash(p.pref_supplier)],
-    ['Lead Time', orDash(p.pref_lead_time)],
-    ['Store', orDash(p.location)]
-  ];
+  const photo = p.photo_url
+    ? '<img class="kcard-photo" src="' + escapeHtml(p.photo_url) + '" alt="">'
+    : '<div class="kcard-photo kcard-photo-ph">no photo</div>';
 
-  sheetEl.innerHTML =
-    '<div class="sheet-handle no-print"></div>' +
-    '<div class="sheet-title no-print">Print card</div>' +
-    '<div class="sheet-sub no-print">60 &times; 85mm. Turn off "Fit to page" / "Scale" in the print dialog so it comes out true size.</div>' +
-    '<div class="print-area">' +
-      '<div class="kcard">' +
-        '<div class="kcard-header">' + escapeHtml(p.name) + '</div>' +
-        '<div class="kcard-visual">' +
-          '<div class="kcard-qr">' + (qrSvg || '<span class="kcard-qr-fallback">QR</span>') + '</div>' +
-          (p.photo_url ? '<img class="kcard-photo" src="' + escapeHtml(p.photo_url) + '" alt="">' : '<div class="kcard-photo kcard-photo-ph">No photo</div>') +
-        '</div>' +
-        '<div class="kcard-fields">' +
-          rows.map(([k, v]) => '<div class="kcard-row"><span class="kcard-k">' + k + '</span><span class="kcard-v">' + v + '</span></div>').join('') +
-        '</div>' +
+  // Re-Order carries MOQ inline on the same line, as on the printed cards.
+  const reorderRow =
+    '<div class="kcard-row">' +
+      '<span class="kcard-k">Re-Order</span>' +
+      '<span class="kcard-v">' + fmtQty(p.min_qty) + '</span>' +
+      '<span class="kcard-k kcard-k2">MOQ</span>' +
+      '<span class="kcard-v kcard-v2">' + (moq.qty ? escapeHtml(moq.qty) : '—') + '</span>' +
+    '</div>';
+
+  const row = (k, v) => '<div class="kcard-row"><span class="kcard-k">' + k + '</span><span class="kcard-v">' + v + '</span></div>';
+
+  return '<div class="kcard">' +
+    (t.label ? '<div class="kcard-type" style="background:' + t.color + '">' + t.label + '</div>' : '') +
+    '<div class="kcard-name" ' + (t.label ? '' : 'style="background:' + t.color + ';color:#fff;"') + '>' + escapeHtml(p.name) + '</div>' +
+    '<div class="kcard-body">' +
+      '<div class="kcard-left">' +
+        photo +
+        '<div class="kcard-qr">' + (qrSvg || '<span class="kcard-qr-fallback">QR</span>') + '</div>' +
+      '</div>' +
+      '<div class="kcard-fields">' +
+        row('Item#', orDash(p.code)) +
+        reorderRow +
+        row('Supplier', orDash(p.pref_supplier)) +
+        row('Lead Time', orDash(p.pref_lead_time)) +
+        row('SKU', orDash(p.group_name)) +
+        row('Store', orDash(p.location)) +
       '</div>' +
     '</div>' +
+  '</div>';
+}
+
+function openPrintCardSheet(p) {
+  renderPrintCardSheet(p);
+  openSheet();
+}
+
+function renderPrintCardSheet(p) {
+  const types = [['internal', 'Internal'], ['external', 'External'], ['manufacture', 'Manufacture'], ['plain', 'Plain']];
+  sheetEl.innerHTML =
+    '<div class="sheet-handle no-print"></div>' +
+    '<div class="sheet-title no-print">Print Kanban card</div>' +
+    '<div class="sheet-sub no-print">60 &times; 85mm. Turn off "Fit to page" / "Scale" in the print dialog so it prints true size.</div>' +
+    '<div class="segmented no-print">' +
+      types.map(([k, label]) =>
+        '<button class="seg-btn ' + (kanbanType === k ? 'active' : '') + '" data-ktype="' + k + '" type="button">' + label + '</button>').join('') +
+    '</div>' +
+    '<div class="print-area">' + kanbanCardHtml(p) + '</div>' +
     '<div class="sheet-actions no-print">' +
       '<button class="sheet-cancel" data-close type="button">Close</button>' +
       '<button class="sheet-save" data-doprint type="button">' + I.print + ' Print</button>' +
-    '</div>' +
-    (qrSvg ? '' : '<div class="status-line no-print">Could not generate a QR code for this item — the card will still print without one.</div>');
+    '</div>';
 
+  sheetEl.querySelectorAll('[data-ktype]').forEach(b => b.addEventListener('click', () => {
+    kanbanType = b.getAttribute('data-ktype');
+    localStorage.setItem('ys_kanban_type', kanbanType);
+    renderPrintCardSheet(p);
+  }));
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
   sheetEl.querySelector('[data-doprint]').addEventListener('click', () => window.print());
-  openSheet();
 }
 
 /* ===================== Move sheet (book in / out / set) ===================== */
