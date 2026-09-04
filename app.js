@@ -1229,7 +1229,20 @@ function renderPrintCardSheet(p) {
     renderPrintCardSheet(p);
   }));
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
-  sheetEl.querySelector('[data-doprint]').addEventListener('click', () => window.print());
+  sheetEl.querySelector('[data-doprint]').addEventListener('click', () => printKanbanCard(p));
+}
+
+/** Clone the card to a top-level print container so no transformed ancestor
+    can shift it, then hand it to the browser's print dialog. */
+function printKanbanCard(p) {
+  let root = document.getElementById('printRoot');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'printRoot';
+    document.body.appendChild(root);
+  }
+  root.innerHTML = kanbanCardHtml(p);
+  window.print();
 }
 
 /* ===================== Move sheet (book in / out / set) ===================== */

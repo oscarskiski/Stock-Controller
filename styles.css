@@ -495,12 +495,30 @@ img { display: block; }
 .kcard-k2 { width: 8mm; border-left: 0.25mm solid #000; }
 .kcard-v2 { flex: 0 0 8mm; }
 
+/* The card is cloned into #printRoot (a direct child of <body>) before printing.
+   Printing from inside .sheet does not work: .sheet carries a transform, which
+   makes it the containing block for any position:fixed descendant, so the card
+   lands relative to the sheet instead of the page. Hiding siblings outright
+   sidesteps that and the layout-preserving quirk of visibility:hidden. */
+#printRoot { display: none; }
+
 @media print {
+  /* The app is dark-themed; force a white page or the sheet floods with black
+     wherever the printer is set to include background graphics. */
+  html, body { background: #fff !important; color: #000 !important; padding: 0 !important; }
+  body > *:not(#printRoot) { display: none !important; }
+  #printRoot { display: block !important; }
   .no-print { display: none !important; }
-  body * { visibility: hidden; }
-  .print-area, .print-area * { visibility: visible; }
-  .print-area { position: fixed; left: 0; top: 0; padding: 0; }
-  @page { size: 60mm 85mm; margin: 0; }
+
+  /* Browsers drop background colours when printing unless told otherwise —
+     without this the coloured banner prints white, and its white text vanishes. */
+  #printRoot, #printRoot * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+
+  /* Print on whatever paper is loaded (usually A4) with the card at true
+     60x85mm, ready to cut out — forcing a 60x85mm page size just confuses
+     printers that only hold A4. */
+  @page { margin: 10mm; }
+  #printRoot .kcard { page-break-inside: avoid; break-inside: avoid; }
 }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
