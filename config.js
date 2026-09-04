@@ -21,5 +21,9 @@ window.CONFIG = {
   PHOTO_QUALITY: 0.82,
 
   // Company name shown under the title
-  SITE_NAME: 'Off-site store'
+  SITE_NAME: 'Off-site store',
+
+  // Shown next to Cost / Price fields in the item form, e.g. 'R', '£', '$'.
+  // Leave blank to show plain numbers with no currency symbol.
+  CURRENCY_SYMBOL: 'R'
 };

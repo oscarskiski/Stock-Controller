@@ -129,6 +129,32 @@ function locSortKey(loc) {
 
 const CATEGORIES = ['Parts', 'Assembled', 'Raw materials'];
 const UNITS = ['ea', 'set', 'pair', 'box', 'pack', 'sheet', 'roll', 'm', 'm²', 'kg', 'litre'];
+const LEAD_UNITS = ['days', 'wks', 'months'];
+
+/* ---- amount+unit fields (MOQ, lead time, cost/price): stored as one text
+   column each ("500 ea", "3 wks", "£7.90") but edited as a proper numeric
+   input plus a unit picker, not a single free-text box a user could type
+   anything into. */
+function parseAmountUnit(str, fallbackUnit) {
+  const m = /^(-?\d+(?:\.\d+)?)\s*([A-Za-z%]*)$/.exec(String(str || '').trim());
+  if (m) return { qty: m[1], unit: m[2] || fallbackUnit || '' };
+  return { qty: '', unit: fallbackUnit || '' };
+}
+function formatAmountUnit(qty, unit) {
+  const n = String(qty == null ? '' : qty).trim();
+  if (!n) return null;
+  return unit ? (n + ' ' + unit) : n;
+}
+function parseMoney(str) {
+  const m = /-?\d+(?:\.\d+)?/.exec(String(str || ''));
+  return m ? m[0] : '';
+}
+function formatMoney(qty) {
+  const n = String(qty == null ? '' : qty).trim();
+  if (!n) return null;
+  const sym = (CFG.CURRENCY_SYMBOL || '').trim();
+  return sym ? (sym + n) : n;
+}
 
 /* ===================== State ===================== */
 const state = {
@@ -1019,14 +1045,25 @@ let itemDraft = null;
 function openItemForm(existing) {
   const p = existing || {};
   const loc = parseLoc(p.location) || { rack: '', bay: '', level: '', pos: '' };
+  const unit = p.unit || 'ea';
+  const prefMoq = parseAmountUnit(p.pref_moq, unit);
+  const secMoq = parseAmountUnit(p.sec_moq, unit);
+  const prefLead = parseAmountUnit(p.pref_lead_time, 'wks');
+  const secLead = parseAmountUnit(p.sec_lead_time, 'wks');
   itemDraft = {
     id: p.id || null,
     name: p.name || '', code: p.code || '', notes: p.notes || '',
     category: p.category || 'Parts', group_name: p.group_name || '',
-    unit: p.unit || 'ea', qty: p.id ? num(p.qty) : 0, min_qty: num(p.min_qty) || '', cost: p.cost || '',
+    unit, qty: p.id ? num(p.qty) : 0, min_qty: num(p.min_qty) || '', cost: parseMoney(p.cost),
     rack: loc.rack, bay: loc.bay, level: loc.level, pos: loc.pos, bulk_location: p.bulk_location || '',
-    pref_supplier: p.pref_supplier || '', pref_moq: p.pref_moq || '', pref_lead_time: p.pref_lead_time || '', pref_price: p.pref_price || '',
-    sec_supplier: p.sec_supplier || '', sec_moq: p.sec_moq || '', sec_lead_time: p.sec_lead_time || '', sec_price: p.sec_price || '',
+    pref_supplier: p.pref_supplier || '',
+    pref_moq_qty: prefMoq.qty, pref_moq_unit: prefMoq.unit,
+    pref_lead_qty: prefLead.qty, pref_lead_unit: prefLead.unit,
+    pref_price: parseMoney(p.pref_price),
+    sec_supplier: p.sec_supplier || '',
+    sec_moq_qty: secMoq.qty, sec_moq_unit: secMoq.unit,
+    sec_lead_qty: secLead.qty, sec_lead_unit: secLead.unit,
+    sec_price: parseMoney(p.sec_price),
     pack_size: p.pack_size || '', pack_weight: p.pack_weight || '', dormant: !!p.dormant,
     photo_url: p.photo_url || '', photoBlob: null
   };
@@ -1049,13 +1086,27 @@ function formFieldHtml(id, label, value, opts) {
   const tag = opts.textarea ? 'textarea' : 'input';
   const attrs = opts.textarea
     ? 'rows="2" style="resize:none;"'
-    : 'type="' + (opts.type || 'text') + '"' + (opts.inputmode ? ' inputmode="' + opts.inputmode + '"' : '');
+    : 'type="' + (opts.type || 'text') + '"' + (opts.inputmode ? ' inputmode="' + opts.inputmode + '"' : '') + (opts.type === 'number' ? ' min="0"' : '');
   const inner = opts.textarea ? escapeHtml(value) : '';
   const valAttr = opts.textarea ? '' : ' value="' + escapeHtml(value) + '"';
   return '<label class="form-field"><div class="ff-label">' + label + '</div>' +
     '<' + tag + ' id="' + id + '" data-ff="' + id + '" ' + attrs + valAttr +
     (opts.placeholder ? ' placeholder="' + escapeHtml(opts.placeholder) + '"' : '') +
     (opts.mono ? ' style="font-family:ui-monospace,Menlo,monospace;"' : '') + '>' + inner + '</' + tag + '></label>';
+}
+
+/** A number field paired with a unit select — used for MOQ ("500 ea") and
+    lead time ("3 wks") so the on-screen keyboard is the numeric pad, not
+    a free-text field a unit word has to be typed into. */
+function qtyUnitPairHtml(qtyId, qtyLabel, unitId, unitLabel, qtyVal, unitVal, options) {
+  return '<div class="form-field-pair">' +
+    '<label class="form-field"><div class="ff-label">' + qtyLabel + '</div>' +
+      '<input id="' + qtyId + '" data-ff="' + qtyId + '" type="number" inputmode="decimal" min="0" value="' + escapeHtml(qtyVal) + '" placeholder="0"></label>' +
+    '<label class="form-field"><div class="ff-label">' + unitLabel + '</div>' +
+      '<select id="' + unitId + '" data-ff="' + unitId + '">' +
+        options.map(u => '<option value="' + escapeHtml(u) + '" ' + (unitVal === u ? 'selected' : '') + '>' + u + '</option>').join('') +
+      '</select></label>' +
+  '</div>';
 }
 
 function renderItemForm() {
@@ -1097,7 +1148,7 @@ function renderItemForm() {
         '<label class="form-field"><div class="ff-label">Unit</div><select id="fUnit" data-ff="fUnit">' + UNITS.map(u => '<option value="' + u + '" ' + (d.unit === u ? 'selected' : '') + '>' + u + '</option>').join('') + '</select></label>' +
       '</div>' +
       formFieldHtml('fMin', 'Reorder qty (min stock)', d.min_qty, { type: 'number', inputmode: 'decimal', placeholder: 'Warn when stock drops below this' }) +
-      formFieldHtml('fCost', 'Cost (budget price)', d.cost, { placeholder: 'e.g. £8.40' }) +
+      formFieldHtml('fCost', 'Cost (budget price)' + (CFG.CURRENCY_SYMBOL ? ' (' + CFG.CURRENCY_SYMBOL + ')' : ''), d.cost, { type: 'number', inputmode: 'decimal', placeholder: '0.00' }) +
     '</div>' +
 
     '<div class="form-section-label">Location</div>' +
@@ -1119,15 +1170,17 @@ function renderItemForm() {
     '<div class="form-section-label">Preferred supplier</div>' +
     '<div class="form-card">' +
       formFieldHtml('fPrefSupplier', 'Supplier', d.pref_supplier, { placeholder: 'Supplier name' }) +
-      '<div class="form-field-pair">' + formFieldHtml('fPrefMoq', 'MOQ', d.pref_moq, {}) + formFieldHtml('fPrefLead', 'Lead time', d.pref_lead_time, {}) + '</div>' +
-      formFieldHtml('fPrefPrice', 'Price', d.pref_price, { placeholder: 'e.g. £7.90' }) +
+      qtyUnitPairHtml('fPrefMoqQty', 'MOQ', 'fPrefMoqUnit', 'Unit', d.pref_moq_qty, d.pref_moq_unit, UNITS) +
+      qtyUnitPairHtml('fPrefLeadQty', 'Lead time', 'fPrefLeadUnit', 'Period', d.pref_lead_qty, d.pref_lead_unit, LEAD_UNITS) +
+      formFieldHtml('fPrefPrice', 'Price' + (CFG.CURRENCY_SYMBOL ? ' (' + CFG.CURRENCY_SYMBOL + ')' : ''), d.pref_price, { type: 'number', inputmode: 'decimal', placeholder: '0.00' }) +
     '</div>' +
 
     '<div class="form-section-label">Secondary supplier</div>' +
     '<div class="form-card">' +
       formFieldHtml('fSecSupplier', 'Supplier', d.sec_supplier, { placeholder: 'Supplier name (optional)' }) +
-      '<div class="form-field-pair">' + formFieldHtml('fSecMoq', 'MOQ', d.sec_moq, {}) + formFieldHtml('fSecLead', 'Lead time', d.sec_lead_time, {}) + '</div>' +
-      formFieldHtml('fSecPrice', 'Price', d.sec_price, { placeholder: 'e.g. £8.60' }) +
+      qtyUnitPairHtml('fSecMoqQty', 'MOQ', 'fSecMoqUnit', 'Unit', d.sec_moq_qty, d.sec_moq_unit, UNITS) +
+      qtyUnitPairHtml('fSecLeadQty', 'Lead time', 'fSecLeadUnit', 'Period', d.sec_lead_qty, d.sec_lead_unit, LEAD_UNITS) +
+      formFieldHtml('fSecPrice', 'Price' + (CFG.CURRENCY_SYMBOL ? ' (' + CFG.CURRENCY_SYMBOL + ')' : ''), d.sec_price, { type: 'number', inputmode: 'decimal', placeholder: '0.00' }) +
     '</div>' +
 
     '<div class="form-section-label">Packing &amp; status</div>' +
@@ -1148,9 +1201,11 @@ function renderItemForm() {
   sheetEl.querySelectorAll('[data-ff]').forEach(e => e.addEventListener('input', () => {
     const key = e.getAttribute('data-ff');
     const map = { fName: 'name', fCode: 'code', fNotes: 'notes', fGroup: 'group_name', fQty: 'qty', fUnit: 'unit',
-      fMin: 'min_qty', fCost: 'cost', fBulk: 'bulk_location', fPrefSupplier: 'pref_supplier', fPrefMoq: 'pref_moq',
-      fPrefLead: 'pref_lead_time', fPrefPrice: 'pref_price', fSecSupplier: 'sec_supplier', fSecMoq: 'sec_moq',
-      fSecLead: 'sec_lead_time', fSecPrice: 'sec_price', fPackSize: 'pack_size', fPackWeight: 'pack_weight' };
+      fMin: 'min_qty', fCost: 'cost', fBulk: 'bulk_location', fPrefSupplier: 'pref_supplier',
+      fPrefMoqQty: 'pref_moq_qty', fPrefMoqUnit: 'pref_moq_unit', fPrefLeadQty: 'pref_lead_qty', fPrefLeadUnit: 'pref_lead_unit',
+      fPrefPrice: 'pref_price', fSecSupplier: 'sec_supplier',
+      fSecMoqQty: 'sec_moq_qty', fSecMoqUnit: 'sec_moq_unit', fSecLeadQty: 'sec_lead_qty', fSecLeadUnit: 'sec_lead_unit',
+      fSecPrice: 'sec_price', fPackSize: 'pack_size', fPackWeight: 'pack_weight' };
     if (map[key]) d[map[key]] = e.value;
   }));
   ['lBay', 'lLevel', 'lPos'].forEach((id, i) => {
@@ -1249,12 +1304,16 @@ async function saveItem() {
       name: d.name, code: (d.code || '').trim(), notes: (d.notes || '').trim(),
       category: d.category, group_name: (d.group_name || '').trim() || null,
       location: buildLoc(d.rack, d.bay, d.level, d.pos), unit: d.unit,
-      min_qty: num(d.min_qty), cost: (d.cost || '').trim() || null,
+      min_qty: num(d.min_qty), cost: formatMoney(d.cost),
       bulk_location: (d.bulk_location || '').trim() || null,
-      pref_supplier: (d.pref_supplier || '').trim() || null, pref_moq: (d.pref_moq || '').trim() || null,
-      pref_lead_time: (d.pref_lead_time || '').trim() || null, pref_price: (d.pref_price || '').trim() || null,
-      sec_supplier: (d.sec_supplier || '').trim() || null, sec_moq: (d.sec_moq || '').trim() || null,
-      sec_lead_time: (d.sec_lead_time || '').trim() || null, sec_price: (d.sec_price || '').trim() || null,
+      pref_supplier: (d.pref_supplier || '').trim() || null,
+      pref_moq: formatAmountUnit(d.pref_moq_qty, d.pref_moq_unit),
+      pref_lead_time: formatAmountUnit(d.pref_lead_qty, d.pref_lead_unit),
+      pref_price: formatMoney(d.pref_price),
+      sec_supplier: (d.sec_supplier || '').trim() || null,
+      sec_moq: formatAmountUnit(d.sec_moq_qty, d.sec_moq_unit),
+      sec_lead_time: formatAmountUnit(d.sec_lead_qty, d.sec_lead_unit),
+      sec_price: formatMoney(d.sec_price),
       pack_size: (d.pack_size || '').trim() || null, pack_weight: (d.pack_weight || '').trim() || null,
       dormant: !!d.dormant, photo_url: photoUrl || null
     };

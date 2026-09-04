@@ -9,3 +9,14 @@ _shot.html
 
 # Local backups exported from the app
 yard-stock-*.json
+
+# Claude Code session metadata — not part of the app
+.claude/
+
+# Design-tool source files — not part of the deployed app
+Mobile parts inventory app/
+Mobile parts inventory app.zip
+
+# Random photos that landed in this folder by accident
+*.jpeg
+*.jpg
