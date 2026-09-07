@@ -49,6 +49,7 @@ create index if not exists products_archived_idx on public.products (archived);
 -- ---------------------------------------------------------
 alter table public.products add column if not exists group_name      text;
 alter table public.products add column if not exists bulk_location   text;
+alter table public.products add column if not exists place_of_use    text;
 alter table public.products add column if not exists cost            text;
 alter table public.products add column if not exists pref_supplier   text;
 alter table public.products add column if not exists pref_moq        text;

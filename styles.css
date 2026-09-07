@@ -445,56 +445,76 @@ img { display: block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .skeleton { background: var(--bg-elevated); border-radius: var(--r-lg); height: 76px; margin-bottom: 8px; opacity: 0.6; }
 
-/* ---------- Printable Kanban card (60mm x 85mm) ---------- */
-.print-area { display: flex; justify-content: center; padding: 8px 0 4px; }
+/* ---------- Printable Kanban card (95mm x 65mm, landscape) ----------
+   Laid out to the printed template, all sizes true to the paper:
+     header      95 x 10mm    18pt bold
+     photo/QR    25 x 55mm    (left rail)
+     full name   70 x 13mm    11pt bold
+     SKU / Re-order+MOQ / Supplier / Place of use / Store location
+                 70 x 7.5mm each, 10pt
+   Name + 5 rows = 50.5mm of the 55mm body, so --kc-slack is the 4.5mm
+   left over at the foot of the field stack. */
+.print-area { display: flex; justify-content: center; padding: 8px 0 4px; overflow-x: auto; }
 .kcard {
-  width: 60mm; height: 85mm; border: 0.35mm solid #000; background: #fff; color: #000;
+  --kc-slack: 4.5mm;
+  width: 95mm; height: 65mm; border: 0.35mm solid #000; background: #fff; color: #000;
   display: flex; flex-direction: column; overflow: hidden; font-family: var(--sans); flex-shrink: 0;
 }
-/* Coloured type banner — Internal / External / Manufacture */
-.kcard-type {
-  color: #fff; font-weight: 800; font-size: 3.4mm; line-height: 1.1;
-  padding: 1.8mm 1.5mm; text-align: center; flex-shrink: 0;
+/* Type header across the full 95mm long side */
+.kcard-head {
+  height: 10mm; flex: 0 0 10mm; color: #fff; font-weight: 800; font-size: 18pt; line-height: 10mm;
+  text-align: center; overflow: hidden; white-space: nowrap;
 }
-/* Product name band under the banner */
-.kcard-name {
-  font-weight: 700; font-size: 3mm; line-height: 1.15; text-align: center;
-  padding: 1.6mm 1.5mm; border-bottom: 0.35mm solid #000; flex-shrink: 0;
-}
-.kcard-body { flex: 1; display: flex; min-height: 0; }
-/* Left rail: photo on top, QR filling the rest, spanning the field rows */
+/* Fills what is left under the header: 55mm less the card's own 0.35mm rules. */
+.kcard-body { flex: 1 1 auto; min-height: 0; display: flex; }
+/* Left rail: photo on top, QR under it */
 .kcard-left {
-  width: 23mm; flex-shrink: 0; border-right: 0.35mm solid #000;
-  display: flex; flex-direction: column; min-height: 0;
+  width: 25mm; flex: 0 0 25mm; border-right: 0.35mm solid #000;
+  display: flex; flex-direction: column;
 }
-.kcard-photo { width: 100%; height: 20mm; object-fit: cover; flex-shrink: 0; border-bottom: 0.35mm solid #000; display: block; }
+.kcard-photo { width: 100%; height: 27mm; flex: 0 0 27mm; object-fit: cover; border-bottom: 0.35mm solid #000; display: block; }
 .kcard-photo-ph {
   display: flex; align-items: center; justify-content: center;
-  color: #999; font-size: 2.3mm; background: #f2f2f2;
+  color: #999; font-size: 7pt; background: #f2f2f2;
 }
-/* QR sits just under the photo and fills the rail width — big enough to scan
-   reliably off a printed 60mm card. */
-.kcard-qr { flex: 1; min-height: 0; padding: 1mm; display: flex; align-items: flex-start; justify-content: center; }
-.kcard-qr svg { width: 21mm; height: 21mm; display: block; }
+.kcard-qr { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.kcard-qr svg { width: 23mm; height: 23mm; display: block; }
 .kcard-qr-fallback {
-  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
-  border: 0.2mm dashed #999; color: #999; font-size: 2.4mm;
+  width: 23mm; height: 23mm; display: flex; align-items: center; justify-content: center;
+  border: 0.2mm dashed #999; color: #999; font-size: 7pt;
 }
-/* Right side: label/value table, grey label cells, hard rules like the printed set */
-.kcard-fields { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.kcard-row { flex: 1; display: flex; min-height: 0; border-bottom: 0.25mm solid #000; }
-.kcard-row:last-child { border-bottom: none; }
+/* Right side: 70mm-wide stack of fixed-height boxes */
+.kcard-fields { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
+.kcard-name {
+  height: 13mm; flex: 0 0 13mm; font-size: 11pt; font-weight: 700; line-height: 1.15;
+  padding: 0 1.5mm; display: flex; align-items: center; overflow: hidden;
+  border-bottom: 0.25mm solid #000;
+}
+.kcard-row {
+  height: 7.5mm; flex: 0 0 7.5mm; display: flex; font-size: 10pt;
+  border-bottom: 0.25mm solid #000;
+}
 .kcard-k {
-  width: 13mm; flex-shrink: 0; background: #e6e6e6; border-right: 0.25mm solid #000;
-  font-size: 2.3mm; padding: 0 0.8mm; display: flex; align-items: center;
+  width: 20mm; flex: 0 0 20mm; background: #e6e6e6; border-right: 0.25mm solid #000;
+  font-size: 8pt; padding: 0 1mm; display: flex; align-items: center;
 }
 .kcard-v {
-  flex: 1; min-width: 0; font-size: 2.6mm; font-weight: 700; padding: 0 1mm;
+  flex: 1; min-width: 0; font-weight: 700; padding: 0 1.5mm;
   display: flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.kcard-k2 { width: 8mm; border-left: 0.25mm solid #000; }
-.kcard-v2 { flex: 0 0 8mm; }
+/* Re-order | MOQ share the row, split down the middle at 35mm */
+.kcard-row-split .kcard-k { width: 15mm; flex: 0 0 15mm; }
+.kcard-row-split .kcard-v { flex: 0 0 20mm; }
+.kcard-row-split .kcard-v2 { flex: 1 1 auto; }
+.kcard-k2 { border-left: 0.25mm solid #000; }
+.kcard-slack { flex: 1 1 var(--kc-slack); min-height: 0; }
 
+/* Screen-only: the card is wider than a phone, so scale it to fit the sheet
+   while keeping every printed dimension exact. */
+@media screen and (max-width: 420px) {
+  .print-area .kcard { transform: scale(0.72); transform-origin: top center; }
+  .print-area { height: 47mm; }
+}
 /* The card is cloned into #printRoot (a direct child of <body>) before printing.
    Printing from inside .sheet does not work: .sheet carries a transform, which
    makes it the containing block for any position:fixed descendant, so the card
@@ -515,7 +535,7 @@ img { display: block; }
   #printRoot, #printRoot * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 
   /* Print on whatever paper is loaded (usually A4) with the card at true
-     60x85mm, ready to cut out — forcing a 60x85mm page size just confuses
+     95x65mm, ready to cut out — forcing a 95x65mm page size just confuses
      printers that only hold A4. */
   @page { margin: 10mm; }
   #printRoot .kcard { page-break-inside: avoid; break-inside: avoid; }

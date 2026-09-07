@@ -1090,6 +1090,7 @@ function renderProductDetail(p) {
         '<div class="field-row"><span class="fname">Secondary supplier</span><span class="field-val">' + orDash(p.sec_supplier) + (p.sec_price ? ' · ' + escapeHtml(p.sec_price) : '') + '</span></div>' +
         '<div class="field-row"><span class="fname">Sec MOQ / lead time</span><span class="field-val">' + orDash(p.sec_moq) + ' · ' + orDash(p.sec_lead_time) + '</span></div>' +
         '<div class="field-row"><span class="fname">Bulk location</span><span class="field-val">' + orDash(p.bulk_location) + '</span></div>' +
+        '<div class="field-row"><span class="fname">Place of use</span><span class="field-val">' + orDash(p.place_of_use) + '</span></div>' +
         '<div class="field-row"><span class="fname">Pack size / weight</span><span class="field-val">' + orDash(p.pack_size) + ' · ' + orDash(p.pack_weight) + '</span></div>' +
         '<div class="field-row"><span class="fname">Last updated</span><span class="field-val">' + (p.updated_at ? fmtWhen(p.updated_at) : '—') + '</span></div>' +
         '<div class="field-row"><span class="fname">Dormant</span><span class="field-val">' + (p.dormant ? 'Yes' : 'No') + '</span></div>' +
@@ -1161,6 +1162,9 @@ const KANBAN_TYPES = {
 };
 let kanbanType = localStorage.getItem('ys_kanban_type') || 'external';
 
+/* 95 x 65mm landscape card: 95x10mm type header, then a 25mm photo/QR rail
+   on the left and a 70mm-wide field stack on the right. Every box size and
+   font size below is fixed in mm/pt so the card prints true to the template. */
 function kanbanCardHtml(p) {
   const t = KANBAN_TYPES[kanbanType] || KANBAN_TYPES.external;
   let qrSvg = '';
@@ -1171,32 +1175,32 @@ function kanbanCardHtml(p) {
     ? '<img class="kcard-photo" src="' + escapeHtml(p.photo_url) + '" alt="">'
     : '<div class="kcard-photo kcard-photo-ph">no photo</div>';
 
-  // Re-Order carries MOQ inline on the same line, as on the printed cards.
+  const row = (k, v) => '<div class="kcard-row"><span class="kcard-k">' + k + '</span><span class="kcard-v">' + v + '</span></div>';
+
+  // Re-order qty and MOQ share one 70x7.5mm row, split down the middle.
   const reorderRow =
-    '<div class="kcard-row">' +
-      '<span class="kcard-k">Re-Order</span>' +
+    '<div class="kcard-row kcard-row-split">' +
+      '<span class="kcard-k">Re-order</span>' +
       '<span class="kcard-v">' + fmtQty(p.min_qty) + '</span>' +
       '<span class="kcard-k kcard-k2">MOQ</span>' +
       '<span class="kcard-v kcard-v2">' + (moq.qty ? escapeHtml(moq.qty) : '—') + '</span>' +
     '</div>';
 
-  const row = (k, v) => '<div class="kcard-row"><span class="kcard-k">' + k + '</span><span class="kcard-v">' + v + '</span></div>';
-
   return '<div class="kcard">' +
-    (t.label ? '<div class="kcard-type" style="background:' + t.color + '">' + t.label + '</div>' : '') +
-    '<div class="kcard-name" ' + (t.label ? '' : 'style="background:' + t.color + ';color:#fff;"') + '>' + escapeHtml(p.name) + '</div>' +
+    '<div class="kcard-head" style="background:' + t.color + '">' + (t.label || 'KANBAN') + '</div>' +
     '<div class="kcard-body">' +
       '<div class="kcard-left">' +
         photo +
         '<div class="kcard-qr">' + (qrSvg || '<span class="kcard-qr-fallback">QR</span>') + '</div>' +
       '</div>' +
       '<div class="kcard-fields">' +
-        row('Item#', orDash(p.code)) +
+        '<div class="kcard-name">' + escapeHtml(p.name) + '</div>' +
+        row('SKU', orDash(p.code)) +
         reorderRow +
         row('Supplier', orDash(p.pref_supplier)) +
-        row('Lead Time', orDash(p.pref_lead_time)) +
-        row('SKU', orDash(p.group_name)) +
-        row('Store', orDash(p.location)) +
+        row('Place of use', orDash(p.place_of_use)) +
+        row('Store loc.', orDash(p.location)) +
+        '<div class="kcard-slack"></div>' +
       '</div>' +
     '</div>' +
   '</div>';
@@ -1212,7 +1216,7 @@ function renderPrintCardSheet(p) {
   sheetEl.innerHTML =
     '<div class="sheet-handle no-print"></div>' +
     '<div class="sheet-title no-print">Print Kanban card</div>' +
-    '<div class="sheet-sub no-print">60 &times; 85mm. Turn off "Fit to page" / "Scale" in the print dialog so it prints true size.</div>' +
+    '<div class="sheet-sub no-print">95 &times; 65mm. Turn off "Fit to page" / "Scale" in the print dialog so it prints true size.</div>' +
     '<div class="segmented no-print">' +
       types.map(([k, label]) =>
         '<button class="seg-btn ' + (kanbanType === k ? 'active' : '') + '" data-ktype="' + k + '" type="button">' + label + '</button>').join('') +
@@ -1409,6 +1413,7 @@ function openItemForm(existing) {
     category: p.category || 'Parts', group_name: p.group_name || '',
     unit, qty: p.id ? num(p.qty) : 0, min_qty: num(p.min_qty) || '', cost: parseMoney(p.cost),
     rack: loc.rack, bay: loc.bay, level: loc.level, pos: loc.pos, bulk_location: p.bulk_location || '',
+    place_of_use: p.place_of_use || '',
     pref_supplier: p.pref_supplier || '',
     pref_moq_qty: prefMoq.qty, pref_moq_unit: prefMoq.unit,
     pref_lead_qty: prefLead.qty, pref_lead_unit: prefLead.unit,
@@ -1532,7 +1537,10 @@ function renderItemForm() {
       '</div>' +
       '<button class="locpick-clear" data-locclear type="button">Clear location</button>' +
     '</div>' +
-    '<div class="form-card" style="margin-top:10px;">' + formFieldHtml('fBulk', 'Bulk location', d.bulk_location, { placeholder: 'e.g. Yard 2, bay 4' }) + '</div>' +
+    '<div class="form-card" style="margin-top:10px;">' +
+      formFieldHtml('fBulk', 'Bulk location', d.bulk_location, { placeholder: 'e.g. Yard 2, bay 4' }) +
+      formFieldHtml('fPlaceUse', 'Place of use', d.place_of_use, { placeholder: 'e.g. Assembly line 2' }) +
+    '</div>' +
 
     '<div class="form-section-label">Preferred supplier</div>' +
     '<div class="form-card">' +
@@ -1569,7 +1577,7 @@ function renderItemForm() {
   sheetEl.querySelectorAll('[data-ff]').forEach(e => e.addEventListener('input', () => {
     const key = e.getAttribute('data-ff');
     const map = { fName: 'name', fCode: 'code', fNotes: 'notes', fGroup: 'group_name', fQty: 'qty', fUnit: 'unit',
-      fMin: 'min_qty', fCost: 'cost', fBulk: 'bulk_location', fPrefSupplier: 'pref_supplier',
+      fMin: 'min_qty', fCost: 'cost', fBulk: 'bulk_location', fPlaceUse: 'place_of_use', fPrefSupplier: 'pref_supplier',
       fPrefMoqQty: 'pref_moq_qty', fPrefMoqUnit: 'pref_moq_unit', fPrefLeadQty: 'pref_lead_qty', fPrefLeadUnit: 'pref_lead_unit',
       fPrefPrice: 'pref_price', fSecSupplier: 'sec_supplier',
       fSecMoqQty: 'sec_moq_qty', fSecMoqUnit: 'sec_moq_unit', fSecLeadQty: 'sec_lead_qty', fSecLeadUnit: 'sec_lead_unit',
@@ -1676,6 +1684,7 @@ async function saveItem() {
       location: buildLoc(d.rack, d.bay, d.level, d.pos), unit: d.unit,
       min_qty: num(d.min_qty), cost: formatMoney(d.cost),
       bulk_location: (d.bulk_location || '').trim() || null,
+      place_of_use: (d.place_of_use || '').trim() || null,
       pref_supplier: (d.pref_supplier || '').trim() || null,
       pref_moq: formatAmountUnit(d.pref_moq_qty, d.pref_moq_unit),
       pref_lead_time: formatAmountUnit(d.pref_lead_qty, d.pref_lead_unit),
