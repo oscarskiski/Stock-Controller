@@ -1057,9 +1057,10 @@ function openSheet() {
   runSpring(s, (v) => { if (ticket === sheetAnim) sheetEl.style.transform = 'translateY(' + v + '%)'; });
 }
 function closeSheet() {
-  // Closing is the one exit every sheet shares, so the camera is released
-  // here rather than in each caller. Harmless when nothing is scanning.
+  // Closing is the one exit every sheet shares, so the camera and any
+  // half-finished crop are released here rather than in each caller.
   stopScanner();
+  releaseCrop();
   const ticket = ++sheetAnim;
   const s = new Spring(sheetY(), { dampingRatio: 1, response: 0.26 });
   s.set(105);
@@ -1688,11 +1689,14 @@ function renderItemForm() {
     '<div class="sheet-handle"></div>' +
     '<div class="sheet-title">' + (editing ? 'Edit item' : 'New item') + '</div>' +
 
-    '<button class="photo-tile" data-photo type="button">' +
-      (d.photo_url
-        ? '<img src="' + escapeHtml(d.photo_url) + '" alt=""><span class="retake">Retake photo</span>'
-        : I.camera + '<span>Take a photo of the item</span>') +
-    '</button>' +
+    '<div class="photo-tile-wrap">' +
+      '<button class="photo-tile" data-photo type="button">' +
+        (d.photo_url
+          ? '<img src="' + escapeHtml(d.photo_url) + '" alt=""><span class="retake">Retake photo</span>'
+          : I.camera + '<span>Take a photo of the item</span>') +
+      '</button>' +
+      (d.photo_url ? '<button class="photo-crop" data-recrop type="button">Crop</button>' : '') +
+    '</div>' +
 
     '<div class="form-section-label">Basics</div>' +
     '<div class="form-card">' +
@@ -1799,6 +1803,8 @@ function renderItemForm() {
     sheetEl.querySelectorAll('[data-dormant]').forEach(x => x.classList.toggle('active', (x.getAttribute('data-dormant') === '1') === d.dormant));
   }));
   sheetEl.querySelector('[data-photo]').addEventListener('click', capturePhoto);
+  const recropBtn = sheetEl.querySelector('[data-recrop]');
+  if (recropBtn) recropBtn.addEventListener('click', recropPhoto);
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
   sheetEl.querySelector('[data-save]').addEventListener('click', saveItem);
   const del = sheetEl.querySelector('[data-delete]');
@@ -1814,7 +1820,191 @@ function updateLocPreview() {
   el.textContent = s || 'No rack location set';
 }
 
-/* ---- photo capture + compression ---- */
+
+/* ===================== Photo cropper =====================
+   A square crop, because the photo is shown at three different shapes — the
+   16:10 tile and hero in the app, and the 10:9 box on the printed card. A
+   square covers all three with the least surprise. Drag to pan, pinch or
+   slide to zoom; the frame is the stage itself, so what you see is the crop. */
+let cropCtx = null;
+
+async function openCropSheet(source, onDone) {
+  releaseCrop();
+  const isBlob = source instanceof Blob;
+  const url = isBlob ? URL.createObjectURL(source) : source;
+  const img = new Image();
+  // A photo already uploaded lives on another origin; without this the canvas
+  // is tainted and toBlob throws when the crop is applied.
+  if (!isBlob) img.crossOrigin = 'anonymous';
+  img.style.maxWidth = 'none';
+
+  try {
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+  } catch (e) {
+    if (isBlob) URL.revokeObjectURL(url);
+    toast(isBlob ? 'Could not open that photo'
+                 : 'That photo cannot be re-cropped here — retake it instead', 'bad');
+    return;
+  }
+
+  cropCtx = { img, url, revoke: isBlob, onDone, zoom: 1, tx: 0, ty: 0, base: 1, stage: 0, pointers: new Map() };
+  renderCropSheet();
+  openSheet();
+}
+
+function releaseCrop() {
+  if (!cropCtx) return;
+  if (cropCtx.revoke) URL.revokeObjectURL(cropCtx.url);
+  cropCtx = null;
+}
+
+function renderCropSheet() {
+  const c = cropCtx;
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">Crop photo</div>' +
+    '<div class="sheet-sub">Drag to move, pinch or slide to zoom. The square is what gets saved.</div>' +
+    '<div class="crop-stage" id="cropStage"></div>' +
+    '<div class="crop-zoom-row">' +
+      '<span class="crop-zoom-mark">' + I.search + '</span>' +
+      '<input type="range" id="cropZoom" min="1" max="5" step="0.01" value="' + c.zoom + '">' +
+    '</div>' +
+    '<div class="sheet-actions">' +
+      '<button class="sheet-cancel" data-cropcancel type="button">Cancel</button>' +
+      '<button class="sheet-save" data-cropdone type="button">Use photo</button>' +
+    '</div>';
+
+  const stage = $('cropStage');
+  stage.appendChild(c.img);
+  // The stage has no width until it is in the layout, so measure on the next frame.
+  requestAnimationFrame(layoutCrop);
+
+  stage.addEventListener('pointerdown', onCropDown);
+  stage.addEventListener('pointermove', onCropMove);
+  stage.addEventListener('pointerup', onCropUp);
+  stage.addEventListener('pointercancel', onCropUp);
+  stage.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    const r = stage.getBoundingClientRect();
+    zoomCrop(c.zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12), ev.clientX - r.left, ev.clientY - r.top);
+  }, { passive: false });
+
+  $('cropZoom').addEventListener('input', (ev) => {
+    const half = c.stage / 2;
+    zoomCrop(parseFloat(ev.target.value), half, half);
+  });
+  sheetEl.querySelector('[data-cropcancel]').addEventListener('click', () => {
+    const done = cropCtx.onDone;
+    releaseCrop();
+    done(null);
+  });
+  sheetEl.querySelector('[data-cropdone]').addEventListener('click', applyCrop);
+}
+
+function layoutCrop() {
+  const stage = $('cropStage');
+  if (!stage || !cropCtx) return;
+  const c = cropCtx;
+  c.stage = stage.clientWidth;
+  // Start at "cover": the smallest scale that fills the square, so the crop
+  // frame is never showing empty space.
+  c.base = Math.max(c.stage / c.img.naturalWidth, c.stage / c.img.naturalHeight);
+  const s = c.base * c.zoom;
+  c.tx = (c.stage - c.img.naturalWidth * s) / 2;
+  c.ty = (c.stage - c.img.naturalHeight * s) / 2;
+  clampCrop();
+  paintCrop();
+}
+
+function clampCrop() {
+  const c = cropCtx, s = c.base * c.zoom;
+  const dw = c.img.naturalWidth * s, dh = c.img.naturalHeight * s;
+  c.tx = Math.min(0, Math.max(c.stage - dw, c.tx));
+  c.ty = Math.min(0, Math.max(c.stage - dh, c.ty));
+}
+
+function paintCrop() {
+  const c = cropCtx;
+  c.img.style.transform = 'translate(' + c.tx + 'px,' + c.ty + 'px) scale(' + (c.base * c.zoom) + ')';
+}
+
+/** Zoom about a point in stage coordinates, so whatever is under the fingers
+    (or the cursor) stays put rather than the image sliding away from them. */
+function zoomCrop(next, fx, fy) {
+  const c = cropCtx;
+  next = Math.max(1, Math.min(5, next));
+  const ratio = next / c.zoom;
+  c.tx = fx - (fx - c.tx) * ratio;
+  c.ty = fy - (fy - c.ty) * ratio;
+  c.zoom = next;
+  clampCrop();
+  paintCrop();
+  const slider = $('cropZoom');
+  if (slider && parseFloat(slider.value) !== next) slider.value = next;
+}
+
+function cropPointList() {
+  return Array.from(cropCtx.pointers.values());
+}
+function onCropDown(ev) {
+  if (!cropCtx) return;
+  ev.currentTarget.setPointerCapture(ev.pointerId);
+  cropCtx.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  cropCtx.gesture = null;
+}
+function onCropMove(ev) {
+  if (!cropCtx || !cropCtx.pointers.has(ev.pointerId)) return;
+  const c = cropCtx;
+  const prev = cropPointList();
+  c.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+  const now = cropPointList();
+
+  if (now.length === 1) {
+    c.tx += now[0].x - prev[0].x;
+    c.ty += now[0].y - prev[0].y;
+    clampCrop();
+    paintCrop();
+    return;
+  }
+  if (now.length < 2) return;
+  const dist = (pts) => Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  const was = dist(prev), is = dist(now);
+  if (!was) return;
+  const rect = $('cropStage').getBoundingClientRect();
+  const midX = (now[0].x + now[1].x) / 2 - rect.left;
+  const midY = (now[0].y + now[1].y) / 2 - rect.top;
+  zoomCrop(c.zoom * (is / was), midX, midY);
+}
+function onCropUp(ev) {
+  if (!cropCtx) return;
+  cropCtx.pointers.delete(ev.pointerId);
+}
+
+async function applyCrop() {
+  const c = cropCtx;
+  const btn = sheetEl.querySelector('[data-cropdone]');
+  btn.disabled = true; btn.textContent = 'Working…';
+  const s = c.base * c.zoom;
+  const side = c.stage / s;                     // source pixels covered by the frame
+  const out = Math.max(240, Math.min(CFG.PHOTO_MAX_PX || 1400, Math.round(side)));
+  const canvas = document.createElement('canvas');
+  canvas.width = out; canvas.height = out;
+  canvas.getContext('2d').drawImage(c.img, -c.tx / s, -c.ty / s, side, side, 0, 0, out, out);
+
+  let blob = null;
+  try {
+    blob = await new Promise((res, rej) =>
+      canvas.toBlob(b => b ? res(b) : rej(new Error('no blob')), 'image/jpeg', CFG.PHOTO_QUALITY || 0.82));
+  } catch (e) {
+    // A cross-origin photo the storage host will not share taints the canvas.
+    toast('That photo cannot be re-cropped here — retake it instead', 'bad');
+  }
+  const done = c.onDone;
+  releaseCrop();
+  done(blob);
+}
+
+/* ---- photo capture ---- */
 function capturePhoto() {
   const input = $('photoInput');
   input.value = '';
@@ -1822,42 +2012,34 @@ function capturePhoto() {
     input.removeEventListener('change', onChange);
     const file = input.files && input.files[0];
     if (!file) return;
-    try {
-      const blob = await compressImage(file);
-      itemDraft.photoBlob = blob;
-      itemDraft.photo_url = URL.createObjectURL(blob);
+    // Straight into the cropper. The crop resizes to PHOTO_MAX_PX and re-encodes
+    // as JPEG on its way out, so there is no separate compression pass — a second
+    // pass would only be a lossier trip over the same pixels.
+    openCropSheet(file, (blob) => {
+      if (blob) usePhotoBlob(blob);
       renderItemForm();
-    } catch (e) {
-      toast('Could not read that photo', 'bad');
-    }
+    });
   };
   input.addEventListener('change', onChange);
   input.click();
 }
 
-async function compressImage(file) {
-  const maxPx = CFG.PHOTO_MAX_PX || 1400;
-  const quality = CFG.PHOTO_QUALITY || 0.82;
-  let bitmap;
-  if (window.createImageBitmap) {
-    try { bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
-    catch (e) { bitmap = await createImageBitmap(file); }
-  } else {
-    bitmap = await new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = URL.createObjectURL(file);
-    });
-  }
-  const w = bitmap.width, h = bitmap.height;
-  const scale = Math.min(1, maxPx / Math.max(w, h));
-  const cw = Math.round(w * scale), ch = Math.round(h * scale);
-  const canvas = document.createElement('canvas');
-  canvas.width = cw; canvas.height = ch;
-  canvas.getContext('2d').drawImage(bitmap, 0, 0, cw, ch);
-  if (bitmap.close) bitmap.close();
-  return await new Promise((resolve) => canvas.toBlob(b => resolve(b), 'image/jpeg', quality));
+/** Re-crop what is already on the draft, without making the user retake it. */
+function recropPhoto() {
+  const d = itemDraft;
+  const source = d.photoBlob || d.photo_url;
+  if (!source) { capturePhoto(); return; }
+  openCropSheet(source, (blob) => {
+    if (blob) usePhotoBlob(blob);
+    renderItemForm();
+  });
+}
+
+function usePhotoBlob(blob) {
+  const d = itemDraft;
+  if (d.photoBlob && d.photo_url && d.photo_url.startsWith('blob:')) URL.revokeObjectURL(d.photo_url);
+  d.photoBlob = blob;
+  d.photo_url = URL.createObjectURL(blob);
 }
 
 async function saveItem() {

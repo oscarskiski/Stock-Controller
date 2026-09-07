@@ -452,6 +452,29 @@ img { display: block; }
 .skeleton { background: var(--bg-elevated); border-radius: var(--r-lg); height: 76px; margin-bottom: 8px; opacity: 0.6; }
 
 
+/* ---------- Photo cropper ---------- */
+.photo-tile-wrap { position: relative; }
+.photo-crop {
+  position: absolute; left: 10px; bottom: 22px; background: rgba(0,0,0,0.6); color: #fff;
+  border: 0; border-radius: var(--r-pill); padding: 6px 14px; font-size: 12.5px; font-weight: 600;
+  cursor: pointer; backdrop-filter: blur(10px); -webkit-appearance: none;
+}
+/* Width, not max-height, is what caps this — an aspect-ratio box clamped by
+   height stops being square, and the crop maths assumes a square stage. */
+.crop-stage {
+  position: relative; width: min(100%, 52vh); aspect-ratio: 1; margin: 4px auto 12px;
+  overflow: hidden; border-radius: var(--r-md); background: #000;
+  touch-action: none; cursor: grab; user-select: none;
+}
+.crop-stage:active { cursor: grabbing; }
+.crop-stage img {
+  position: absolute; top: 0; left: 0; transform-origin: 0 0;
+  will-change: transform; pointer-events: none; -webkit-user-drag: none; max-width: none;
+}
+.crop-zoom-row { display: flex; align-items: center; gap: 10px; padding: 0 2px 6px; }
+.crop-zoom-mark { color: var(--label-tertiary); display: flex; flex-shrink: 0; }
+.crop-zoom-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--sys-blue); }
+
 /* ---------- QR scanner sheet ---------- */
 .scan-stage {
   position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 46vh;
