@@ -75,6 +75,7 @@ const I = {
   target: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.4"/></svg>',
   reorder: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="9.5" y="4" width="5" height="10" rx="1.5"/><rect x="16" y="4" width="5" height="13" rx="1.5"/></svg>',
   truck: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>',
+  scan: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8V5.5A2.5 2.5 0 0 1 5.5 3H8"/><path d="M16 3h2.5A2.5 2.5 0 0 1 21 5.5V8"/><path d="M21 16v2.5a2.5 2.5 0 0 1-2.5 2.5H16"/><path d="M8 21H5.5A2.5 2.5 0 0 1 3 18.5V16"/><path d="M3 12h18"/></svg>',
   print: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M6 14h12v7H6z"/></svg>'
 };
 
@@ -1056,6 +1057,9 @@ function openSheet() {
   runSpring(s, (v) => { if (ticket === sheetAnim) sheetEl.style.transform = 'translateY(' + v + '%)'; });
 }
 function closeSheet() {
+  // Closing is the one exit every sheet shares, so the camera is released
+  // here rather than in each caller. Harmless when nothing is scanning.
+  stopScanner();
   const ticket = ++sheetAnim;
   const s = new Spring(sheetY(), { dampingRatio: 1, response: 0.26 });
   s.set(105);
@@ -1331,6 +1335,114 @@ function printKanbanCard(p) {
   }
   root.innerHTML = kanbanCardHtml(p);
   window.print();
+}
+
+
+/* ===================== QR scanner =====================
+   Reads the QR printed on a Kanban card and jumps to that item, so a card
+   can be actioned without leaving the app. Decoding uses the browser's own
+   BarcodeDetector — no library ships with the app. Where that is missing
+   (Safari, notably) the sheet says so and points at the phone's Camera app,
+   which opens the same deep link the QR carries. */
+let scanStream = null;
+let scanTicket = 0;
+
+function scannerSupported() {
+  return typeof BarcodeDetector !== 'undefined' &&
+         !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+}
+
+function openScanSheet() {
+  renderScanSheet();
+  openSheet();
+  if (scannerSupported()) startScanner();
+}
+
+function renderScanSheet() {
+  const stage = scannerSupported()
+    ? '<div class="scan-stage"><video id="scanVideo" playsinline muted autoplay></video><div class="scan-frame"></div></div>' +
+      '<div class="scan-status" id="scanStatus">Starting the camera…</div>'
+    : '<div class="scan-stage scan-stage-off"><div class="scan-off-note">' +
+        'This browser cannot read QR codes inside a page.<br>' +
+        'Point the phone\'s own <strong>Camera</strong> app at the card instead — the QR opens this same item.' +
+      '</div></div>';
+
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">Scan a Kanban card</div>' +
+    '<div class="sheet-sub">Hold the card\'s QR square inside the frame.</div>' +
+    stage +
+    '<div class="sheet-actions"><button class="sheet-cancel" data-close type="button">Cancel</button></div>';
+
+  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+}
+
+function setScanStatus(msg) {
+  const el = $('scanStatus');
+  if (el) el.textContent = msg;
+}
+
+async function startScanner() {
+  const ticket = ++scanTicket;
+  const video = $('scanVideo');
+  if (!video) return;
+
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } }
+    });
+  } catch (e) {
+    setScanStatus('No camera. Allow camera access for this site, then try again.');
+    return;
+  }
+  // The sheet may have been closed while the camera was warming up.
+  if (ticket !== scanTicket) { stopScanner(); return; }
+
+  video.srcObject = scanStream;
+  try { await video.play(); } catch (e) { /* autoplay is best-effort */ }
+  setScanStatus('Point at the QR on the card');
+
+  const detector = new BarcodeDetector({ formats: ['qr_code'] });
+  // Ten looks a second is plenty and leaves the phone responsive; running
+  // this off requestAnimationFrame just burns battery holding a steady card.
+  (function tick() {
+    if (ticket !== scanTicket) return;
+    detector.detect(video)
+      .then(codes => {
+        if (ticket !== scanTicket) return;
+        const hit = codes && codes.length ? codes[0].rawValue : '';
+        if (hit) onScanned(hit);
+        else setTimeout(tick, 120);
+      })
+      .catch(() => { if (ticket === scanTicket) setTimeout(tick, 250); });
+  })();
+}
+
+function stopScanner() {
+  scanTicket++;
+  if (!scanStream) return;
+  scanStream.getTracks().forEach(t => t.stop());
+  scanStream = null;
+}
+
+/** Pull the item id out of whatever the QR carried — normally the deep link
+    this app prints, but a bare id is accepted too. */
+function itemIdFromScan(raw) {
+  const s = String(raw || '').trim();
+  try {
+    const v = new URL(s).searchParams.get('item');
+    if (v) return v;
+  } catch (e) { /* not a URL — fall through */ }
+  return /^[0-9a-f-]{20,}$/i.test(s) ? s : '';
+}
+
+function onScanned(raw) {
+  stopScanner();
+  const id = itemIdFromScan(raw);
+  if (!id) { toast('That is not a Yard Stock card'); closeSheet(); return; }
+  if (!productById(id)) { toast('That item was not found'); closeSheet(); return; }
+  if (navigator.vibrate) navigator.vibrate(20);
+  openProductDetail(id);
 }
 
 /* ===================== Move sheet (book in / out / set) ===================== */
@@ -1942,6 +2054,8 @@ function renderPickProduct(dir) {
 $('fabAdd').innerHTML = I.plus;
 $('fabAdd').addEventListener('click', () => { if (!state.loading) openFabSheet(); });
 $('navMe').addEventListener('click', () => openPersonSheet());
+$('navScan').innerHTML = I.scan;
+$('navScan').addEventListener('click', openScanSheet);
 $('navGear').innerHTML = I.gear;
 $('navGear').addEventListener('click', () => openSettingsSheet());
 

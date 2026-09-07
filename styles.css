@@ -451,6 +451,29 @@ img { display: block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .skeleton { background: var(--bg-elevated); border-radius: var(--r-lg); height: 76px; margin-bottom: 8px; opacity: 0.6; }
 
+
+/* ---------- QR scanner sheet ---------- */
+.scan-stage {
+  position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 46vh;
+  margin: 12px 0 10px; border-radius: var(--r-lg); overflow: hidden;
+  background: #000; display: flex; align-items: center; justify-content: center;
+}
+.scan-stage video { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* The frame is a guide, not a crop — BarcodeDetector reads the whole frame,
+   so a code just outside it still scans. */
+.scan-frame {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 58%; aspect-ratio: 1; border-radius: 14px;
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.9), 0 0 0 2000px rgba(0,0,0,0.35);
+  pointer-events: none;
+}
+.scan-status {
+  font-size: 13px; color: var(--label-tertiary); text-align: center;
+  min-height: 18px; line-height: 1.45; margin-bottom: 4px;
+}
+.scan-stage-off { background: var(--bg-elevated); aspect-ratio: auto; padding: 22px 18px; }
+.scan-off-note { font-size: 14px; color: var(--label-secondary); line-height: 1.5; text-align: center; }
+
 /* ---------- Printable Kanban card (95mm x 65mm, landscape) ----------
    Laid out to the printed template, all sizes true to the paper:
      header      95 x 10mm    18pt bold
