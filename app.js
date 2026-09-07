@@ -1160,9 +1160,10 @@ function itemDeepLink(p) {
   url.searchParams.set('item', p.id);
   return url.toString();
 }
-
-/* The three card types in use, each with its own banner colour — matching
-   the printed set: internal moves, bought-in items, and production triggers. */
+/* The four card types, each with the banner colour it ships with. Internal,
+   external and manufacture name the card type in the banner and carry the
+   item name below it; plain puts the item name in the banner, matching the
+   printed template. Banner colours are overridable per type — see kanbanColor. */
 const KANBAN_TYPES = {
   internal:    { label: 'Internal KANBAN',    color: '#6B2E1F' },
   external:    { label: 'External KANBAN',    color: '#1E7B34' },
@@ -1170,6 +1171,28 @@ const KANBAN_TYPES = {
   plain:       { label: '',                   color: '#B0301F' }
 };
 let kanbanType = localStorage.getItem('ys_kanban_type') || 'external';
+
+/* Per-type banner colour the user has picked, keyed by type. Anything not in
+   here falls back to the type's shipped colour. */
+let kanbanColors = (() => {
+  try { return JSON.parse(localStorage.getItem('ys_kanban_colors') || '{}') || {}; }
+  catch (e) { return {}; }
+})();
+function kanbanColor(type) {
+  return kanbanColors[type] || (KANBAN_TYPES[type] || KANBAN_TYPES.external).color;
+}
+function setKanbanColor(type, hex) {
+  kanbanColors[type] = hex;
+  localStorage.setItem('ys_kanban_colors', JSON.stringify(kanbanColors));
+}
+/** Black or white banner text, whichever survives on the chosen colour —
+    a pale custom banner would swallow white text entirely. */
+function bannerInk(hex) {
+  const h = String(hex || '').replace('#', '');
+  if (h.length !== 6) return '#fff';
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 150 ? '#000' : '#fff';
+}
 
 /* 95 x 65mm landscape card: 95x10mm type header, then a 30mm photo/QR rail
    on the left and a 65mm-wide field stack on the right. Every box size and
@@ -1189,10 +1212,17 @@ function kanbanCardHtml(p) {
 
   const row = (k, v) => '<div class="kcard-row"><span class="kcard-k">' + k + ':</span><span class="kcard-v">' + v + '</span></div>';
 
-  // The name sits in the header band, so it has to fit 95mm on one line —
-  // step the 18pt down for the long ones rather than clipping them.
-  const nameLen = String(p.name || '').length;
-  const headSize = nameLen > 30 ? ' kcard-head-xs' : nameLen > 22 ? ' kcard-head-sm' : '';
+  // Plain cards follow the printed template — item name in the banner, the
+  // word KANBAN below it. The named types keep the type in the banner with
+  // the item name under it, so a rack of them still reads at a glance.
+  const isPlain = kanbanType === 'plain';
+  const headText = isPlain ? p.name : t.label;
+  const nameText = isPlain ? 'KANBAN' : p.name;
+  // Whatever lands in the banner has to fit 95mm on one line — step the 18pt
+  // down for the long ones rather than clipping them.
+  const headLen = String(headText || '').length;
+  const headSize = headLen > 30 ? ' kcard-head-xs' : headLen > 22 ? ' kcard-head-sm' : '';
+  const bg = kanbanColor(kanbanType);
 
   // Re-order qty and MOQ share one row, split down the middle.
   const reorderRow =
@@ -1204,14 +1234,14 @@ function kanbanCardHtml(p) {
     '</div>';
 
   return '<div class="kcard">' +
-    '<div class="kcard-head' + headSize + '" style="background:' + t.color + '">' + escapeHtml(p.name) + '</div>' +
+    '<div class="kcard-head' + headSize + '" style="background:' + bg + ';color:' + bannerInk(bg) + '">' + escapeHtml(headText) + '</div>' +
     '<div class="kcard-body">' +
       '<div class="kcard-left">' +
         photo +
         '<div class="kcard-qr">' + (qrSvg || '<span class="kcard-qr-fallback">QR</span>') + '</div>' +
       '</div>' +
       '<div class="kcard-fields">' +
-        '<div class="kcard-name">' + (t.label || 'KANBAN') + '</div>' +
+        '<div class="kcard-name' + (isPlain ? ' kcard-name-type' : '') + '">' + escapeHtml(nameText) + '</div>' +
         row('SKU', orDash(p.code)) +
         reorderRow +
         row('Supplier', orDash(p.pref_supplier)) +
@@ -1227,8 +1257,15 @@ function openPrintCardSheet(p) {
   openSheet();
 }
 
+/* A handful of presets covers the usual set; the swatch beside them is a
+   native colour picker for anything else. Both save per card type. */
+const KANBAN_SWATCHES = ['#B0301F', '#6B2E1F', '#1E7B34', '#1F5FA8', '#C9782A', '#5B2D82', '#2B2B2B'];
+
 function renderPrintCardSheet(p) {
   const types = [['internal', 'Internal'], ['external', 'External'], ['manufacture', 'Manufacture'], ['plain', 'Plain']];
+  const cur = kanbanColor(kanbanType);
+  const isDefault = !kanbanColors[kanbanType];
+
   sheetEl.innerHTML =
     '<div class="sheet-handle no-print"></div>' +
     '<div class="sheet-title no-print">Print Kanban card</div>' +
@@ -1236,6 +1273,15 @@ function renderPrintCardSheet(p) {
     '<div class="segmented no-print">' +
       types.map(([k, label]) =>
         '<button class="seg-btn ' + (kanbanType === k ? 'active' : '') + '" data-ktype="' + k + '" type="button">' + label + '</button>').join('') +
+    '</div>' +
+    '<div class="kcolor-row no-print">' +
+      '<span class="kcolor-label">Label colour</span>' +
+      KANBAN_SWATCHES.map(c =>
+        '<button class="kcolor-dot ' + (c.toLowerCase() === cur.toLowerCase() ? 'active' : '') + '" data-kswatch="' + c + '" style="background:' + c + '" type="button" title="' + c + '"></button>').join('') +
+      '<label class="kcolor-custom" title="Pick any colour">' +
+        '<input type="color" data-kcolor value="' + cur + '">' +
+      '</label>' +
+      (isDefault ? '' : '<button class="kcolor-reset" data-kreset type="button">Reset</button>') +
     '</div>' +
     '<div class="print-area">' + kanbanCardHtml(p) + '</div>' +
     '<div class="sheet-actions no-print">' +
@@ -1248,8 +1294,30 @@ function renderPrintCardSheet(p) {
     localStorage.setItem('ys_kanban_type', kanbanType);
     renderPrintCardSheet(p);
   }));
+  sheetEl.querySelectorAll('[data-kswatch]').forEach(b => b.addEventListener('click', () => {
+    setKanbanColor(kanbanType, b.getAttribute('data-kswatch'));
+    renderPrintCardSheet(p);
+  }));
+  const picker = sheetEl.querySelector('[data-kcolor]');
+  // Repaint the banner live as the picker is dragged, but only re-render the
+  // sheet once it settles — a re-render mid-drag closes the colour picker.
+  picker.addEventListener('input', () => paintBanner(picker.value));
+  picker.addEventListener('change', () => { setKanbanColor(kanbanType, picker.value); renderPrintCardSheet(p); });
+  const reset = sheetEl.querySelector('[data-kreset]');
+  if (reset) reset.addEventListener('click', () => {
+    delete kanbanColors[kanbanType];
+    localStorage.setItem('ys_kanban_colors', JSON.stringify(kanbanColors));
+    renderPrintCardSheet(p);
+  });
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
   sheetEl.querySelector('[data-doprint]').addEventListener('click', () => printKanbanCard(p));
+}
+
+function paintBanner(hex) {
+  const head = sheetEl.querySelector('.kcard-head');
+  if (!head) return;
+  head.style.background = hex;
+  head.style.color = bannerInk(hex);
 }
 
 /** Clone the card to a top-level print container so no transformed ancestor
