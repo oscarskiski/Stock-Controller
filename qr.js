@@ -39,11 +39,15 @@
       }
       poly = next;
     }
-    return poly; // highest-degree coefficient first once reversed below
+    return poly; // highest-degree coefficient first, poly[0] === 1
   }
   /** Reed-Solomon remainder (the EC codewords) for a data codeword array. */
   function rsEncode(data, ecLen) {
-    const gen = rsGeneratorPoly(ecLen).slice().reverse(); // gen[0] is x^ecLen coefficient (=1)
+    // rsGeneratorPoly already returns the polynomial highest-degree first, so
+    // gen[0] is the x^ecLen coefficient and equals 1 — which is what makes the
+    // long division below cancel res[i]. Reversing it here silently produced
+    // garbage EC codewords and unscannable codes.
+    const gen = rsGeneratorPoly(ecLen);
     const res = data.concat(new Array(ecLen).fill(0));
     for (let i = 0; i < data.length; i++) {
       const coef = res[i];
@@ -197,12 +201,17 @@
     // place data bits in the standard up/down zigzag, skipping reserved modules
     const bitsOut = [];
     allCw.forEach(cw => { for (let i = 7; i >= 0; i--) bitsOut.push((cw >> i) & 1); });
+    // Standard up/down zigzag over column pairs, right to left. When the pair
+    // reaches the vertical timing line at column 6 the whole walk shifts one
+    // column left, so `right` itself must be reassigned — deriving a separate
+    // column from it left columns 3..0 misplaced and column 0 never written,
+    // which no scanner could read.
     let bi = 0, up = true;
-    for (let colPair = size - 1; colPair > 0; colPair -= 2) {
-      const col = colPair === 6 ? 5 : colPair; // column 6 is the timing column, skip to 5
+    for (let right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
       for (let k = 0; k < size; k++) {
         const row = up ? size - 1 - k : k;
-        for (const c of [col, col - 1]) {
+        for (const c of [right, right - 1]) {
           if (reserved[row][c]) continue;
           const dark = bi < bitsOut.length ? !!bitsOut[bi++] : false;
           const masked = ((row + c) % 2 === 0) ? !dark : dark; // mask 0: (row+col)%2==0
@@ -217,7 +226,9 @@
 
   function toSvg(text, opts) {
     opts = opts || {};
-    const quiet = opts.quietZone == null ? 2 : opts.quietZone;
+    // The spec requires a 4-module quiet zone; at 2 many phone scanners simply
+    // refuse to lock on, especially against the card's printed border.
+    const quiet = opts.quietZone == null ? 4 : opts.quietZone;
     const dark = opts.dark || '#000000';
     const light = opts.light || 'transparent';
     const { size, modules } = encode(text);

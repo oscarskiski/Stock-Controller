@@ -512,9 +512,11 @@ img { display: block; }
   color: #999; font-size: 7pt; background: #f2f2f2;
 }
 .kcard-qr { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
-.kcard-qr svg { width: 25mm; height: 25mm; display: block; }
+/* 27mm inside a 30mm rail: the spec quiet zone eats 8 of the 45 units, so
+   the code itself lands at ~0.6mm a module — comfortable for a phone. */
+.kcard-qr svg { width: 27mm; height: 27mm; display: block; }
 .kcard-qr-fallback {
-  width: 25mm; height: 25mm; display: flex; align-items: center; justify-content: center;
+  width: 27mm; height: 27mm; display: flex; align-items: center; justify-content: center;
   border: 0.2mm dashed #999; color: #999; font-size: 7pt;
 }
 /* Right side: the remaining 65mm, a stack of fixed-height boxes */
