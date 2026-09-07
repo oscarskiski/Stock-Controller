@@ -678,7 +678,9 @@ function itemsScreenHtml() {
       return '<div class="row"><div class="row-body" data-edit="' + p.id + '">' +
         '<div class="row-title">' + escapeHtml(p.name) + (p.dormant ? ' <span class="meta-chip">dormant</span>' : '') + '</div>' +
         '<div class="row-meta"><span class="row-mono">' + sku + ' · ' + group + '</span></div>' +
-        '</div><span class="row-trail edit-pencil">✎</span></div>';
+        '</div>' +
+        '<button class="row-trail row-print" data-printcard="' + p.id + '" type="button" title="Print Kanban card">' + I.print + '</button>' +
+        '<span class="row-trail edit-pencil">✎</span></div>';
     }).join('');
   }
   html += '</div>';
@@ -691,6 +693,13 @@ function wireItems(el) {
   el.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => {
     const p = productById(b.getAttribute('data-edit'));
     if (p) openItemForm(p);
+  }));
+  // Print straight from the catalogue row, so a card can be run off without
+  // going via the rack screen and opening the item first.
+  el.querySelectorAll('[data-printcard]').forEach(b => b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    const p = productById(b.getAttribute('data-printcard'));
+    if (p) openPrintCardSheet(p);
   }));
 }
 
@@ -1162,22 +1171,25 @@ const KANBAN_TYPES = {
 };
 let kanbanType = localStorage.getItem('ys_kanban_type') || 'external';
 
-/* 95 x 65mm landscape card: 95x10mm type header, then a 25mm photo/QR rail
-   on the left and a 70mm-wide field stack on the right. Every box size and
-   font size below is fixed in mm/pt so the card prints true to the template. */
+/* 95 x 65mm landscape card: 95x10mm type header, then a 30mm photo/QR rail
+   on the left and a 65mm-wide field stack on the right. Every box size and
+   font size is fixed in mm/pt in styles.css so it prints true to template. */
 function kanbanCardHtml(p) {
   const t = KANBAN_TYPES[kanbanType] || KANBAN_TYPES.external;
   let qrSvg = '';
   try { qrSvg = QR.toSvg(itemDeepLink(p), { dark: '#000' }); } catch (e) { qrSvg = ''; }
 
   const moq = parseAmountUnit(p.pref_moq, p.unit);
+  // A manufacture card is a make signal, so what matters is how long the
+  // replacement takes to come off the line, not where the stock gets used.
+  const isMfg = kanbanType === 'manufacture';
   const photo = p.photo_url
     ? '<img class="kcard-photo" src="' + escapeHtml(p.photo_url) + '" alt="">'
     : '<div class="kcard-photo kcard-photo-ph">no photo</div>';
 
   const row = (k, v) => '<div class="kcard-row"><span class="kcard-k">' + k + '</span><span class="kcard-v">' + v + '</span></div>';
 
-  // Re-order qty and MOQ share one 70x7.5mm row, split down the middle.
+  // Re-order qty and MOQ share one row, split down the middle.
   const reorderRow =
     '<div class="kcard-row kcard-row-split">' +
       '<span class="kcard-k">Re-order</span>' +
@@ -1198,9 +1210,8 @@ function kanbanCardHtml(p) {
         row('SKU', orDash(p.code)) +
         reorderRow +
         row('Supplier', orDash(p.pref_supplier)) +
-        row('Place of use', orDash(p.place_of_use)) +
+        (isMfg ? row('Lead time', orDash(p.pref_lead_time)) : row('Place of use', orDash(p.place_of_use))) +
         row('Store loc.', orDash(p.location)) +
-        '<div class="kcard-slack"></div>' +
       '</div>' +
     '</div>' +
   '</div>';
