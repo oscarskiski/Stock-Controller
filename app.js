@@ -1187,31 +1187,36 @@ function kanbanCardHtml(p) {
     ? '<img class="kcard-photo" src="' + escapeHtml(p.photo_url) + '" alt="">'
     : '<div class="kcard-photo kcard-photo-ph">no photo</div>';
 
-  const row = (k, v) => '<div class="kcard-row"><span class="kcard-k">' + k + '</span><span class="kcard-v">' + v + '</span></div>';
+  const row = (k, v) => '<div class="kcard-row"><span class="kcard-k">' + k + ':</span><span class="kcard-v">' + v + '</span></div>';
+
+  // The name sits in the header band, so it has to fit 95mm on one line —
+  // step the 18pt down for the long ones rather than clipping them.
+  const nameLen = String(p.name || '').length;
+  const headSize = nameLen > 30 ? ' kcard-head-xs' : nameLen > 22 ? ' kcard-head-sm' : '';
 
   // Re-order qty and MOQ share one row, split down the middle.
   const reorderRow =
     '<div class="kcard-row kcard-row-split">' +
-      '<span class="kcard-k">Re-order</span>' +
+      '<span class="kcard-k">Re-Order QTY:</span>' +
       '<span class="kcard-v">' + fmtQty(p.min_qty) + '</span>' +
-      '<span class="kcard-k kcard-k2">MOQ</span>' +
+      '<span class="kcard-k kcard-k2">MOQ:</span>' +
       '<span class="kcard-v kcard-v2">' + (moq.qty ? escapeHtml(moq.qty) : '—') + '</span>' +
     '</div>';
 
   return '<div class="kcard">' +
-    '<div class="kcard-head" style="background:' + t.color + '">' + (t.label || 'KANBAN') + '</div>' +
+    '<div class="kcard-head' + headSize + '" style="background:' + t.color + '">' + escapeHtml(p.name) + '</div>' +
     '<div class="kcard-body">' +
       '<div class="kcard-left">' +
         photo +
         '<div class="kcard-qr">' + (qrSvg || '<span class="kcard-qr-fallback">QR</span>') + '</div>' +
       '</div>' +
       '<div class="kcard-fields">' +
-        '<div class="kcard-name">' + escapeHtml(p.name) + '</div>' +
+        '<div class="kcard-name">' + (t.label || 'KANBAN') + '</div>' +
         row('SKU', orDash(p.code)) +
         reorderRow +
         row('Supplier', orDash(p.pref_supplier)) +
-        (isMfg ? row('Lead time', orDash(p.pref_lead_time)) : row('Place of use', orDash(p.place_of_use))) +
-        row('Store loc.', orDash(p.location)) +
+        (isMfg ? row('Lead Time', orDash(p.pref_lead_time)) : row('Place of Use', orDash(p.place_of_use))) +
+        row('Store Location', orDash(p.location)) +
       '</div>' +
     '</div>' +
   '</div>';

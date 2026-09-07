@@ -3,7 +3,7 @@
    with no signal. Stock data itself is NOT cached here (db.js
    handles that in IndexedDB) so you never see a stale count
    presented as if it were live. */
-const SHELL = 'yardstock-shell-v4';
+const SHELL = 'yardstock-shell-v5';
 const FILES = [
   'index.html',
   'styles.css',

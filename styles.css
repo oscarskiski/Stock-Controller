@@ -467,11 +467,17 @@ img { display: block; }
   width: 95mm; height: 65mm; border: 0.35mm solid #000; background: #fff; color: #000;
   display: flex; flex-direction: column; overflow: hidden; font-family: var(--sans); flex-shrink: 0;
 }
-/* Type header across the full 95mm long side */
+/* Item name across the full 95mm long side; the band colour is what says
+   which kind of card this is. Long names step down from the 18pt so they
+   still fit on one line. */
 .kcard-head {
   height: 10mm; flex: 0 0 10mm; color: #fff; font-weight: 800; font-size: 18pt; line-height: 10mm;
-  text-align: center; overflow: hidden; white-space: nowrap;
+  text-align: center; overflow: hidden; white-space: nowrap; padding: 0 1.5mm;
 }
+.kcard-head-sm { font-size: 14pt; }
+.kcard-head-xs { font-size: 11pt; }
+/* Card type, under the name band */
+.kcard-name { justify-content: center; letter-spacing: 0.1mm; }
 /* Fills what is left under the header: 55mm less the card's own 0.35mm rules. */
 .kcard-body { flex: 1 1 auto; min-height: 0; display: flex; }
 /* Left rail: photo on top, QR under it */
@@ -502,16 +508,17 @@ img { display: block; }
   border-bottom: 0.25mm solid #000;
 }
 .kcard-k {
-  width: 20mm; flex: 0 0 20mm; background: #e6e6e6; border-right: 0.25mm solid #000;
-  font-size: 8pt; padding: 0 1mm; display: flex; align-items: center;
+  width: 24mm; flex: 0 0 24mm; background: #e6e6e6; border-right: 0.25mm solid #000;
+  font-size: 7.5pt; padding: 0 1mm; display: flex; align-items: center; white-space: nowrap;
 }
 .kcard-v {
   flex: 1; min-width: 0; font-weight: 700; padding: 0 1.5mm;
   display: flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* Re-order | MOQ share the row, split down the middle of the 65mm column */
-.kcard-row-split .kcard-k { width: 15mm; flex: 0 0 15mm; }
-.kcard-row-split .kcard-v { flex: 0 0 17.5mm; }
+/* Re-Order QTY | MOQ share one row. The first label keeps the 24mm of every
+   other row so the vertical rule runs straight down the card. */
+.kcard-row-split .kcard-v { flex: 0 0 19mm; }
+.kcard-row-split .kcard-k2 { width: 10mm; flex: 0 0 10mm; }
 .kcard-row-split .kcard-v2 { flex: 1 1 auto; }
 .kcard-k2 { border-left: 0.25mm solid #000; }
 /* Screen-only: the card is wider than a phone, so scale it to fit the sheet
