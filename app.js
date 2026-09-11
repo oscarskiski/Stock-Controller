@@ -180,7 +180,10 @@ const state = {
      state. role 'client' puts the app into the stripped-back client view. */
   profile: null,
   clients: [],
-  authError: ''
+  authError: '',
+  /* Set by the ?login link or the Settings row: shows the sign-in screen
+     even before the cutover makes it compulsory. */
+  forceSignIn: false
 };
 
 function isClientView() { return !!(state.profile && state.profile.role === 'client'); }
@@ -353,9 +356,22 @@ function renderTabs() {
     session and there is none, the client's read-only summary, and the full
     shop-floor app. The first two hide the tab bar and the add button. */
 function appMode() {
-  if (CFG.REQUIRE_LOGIN && !DB.signedIn) return 'signin';
+  // REQUIRE_LOGIN is the after-cutover state, where nobody gets in without
+  // an account. Before then the sign-in screen still has to be reachable —
+  // clients need it, and staff need it to test one — hence forceSignIn,
+  // set by the ?login link or the Settings row.
+  if (!DB.signedIn && (CFG.REQUIRE_LOGIN || state.forceSignIn)) return 'signin';
   if (isClientView()) return 'client';
   return 'staff';
+}
+
+/** The link to hand a client. Bookmarkable, and it opens straight on the
+    sign-in screen however REQUIRE_LOGIN is set. */
+function clientSignInUrl() {
+  const url = new URL(location.href);
+  url.search = ''; url.hash = '';
+  url.searchParams.set('login', '1');
+  return url.toString();
 }
 
 function render() {
@@ -461,6 +477,8 @@ function signInScreenHtml() {
     '<button class="sheet-save auth-go" id="authGo" type="button">Sign in</button>' +
     '<div class="status-line">Staff: sign in once on this phone and it stays signed in.<br>' +
       'Clients: your username and password come from us.</div>' +
+    (CFG.REQUIRE_LOGIN ? '' :
+      '<button class="link-btn" id="authBack" type="button" style="display:block;margin:14px auto 0;">Back to the app</button>') +
   '</div>';
 }
 
@@ -495,6 +513,12 @@ function wireSignIn(el) {
   };
   go.addEventListener('click', submit);
   el.querySelector('#authPass').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') submit(); });
+  const back = el.querySelector('#authBack');
+  if (back) back.addEventListener('click', () => {
+    state.forceSignIn = false;
+    state.authError = '';
+    if (!state.products.length) refresh(true); else render();
+  });
 }
 
 /** Read the signed-in account's profile, so the app knows whether it is
@@ -1204,6 +1228,10 @@ function clientsSettingsRowHtml() {
           ? state.clients.length + ' client' + (state.clients.length === 1 ? '' : 's') + ' · ' + allocated + ' items allocated'
           : 'Stock you hold for customers') + '</div>' +
       '</div><span class="row-trail">' + I.chev + '</span></div>' +
+      '<div class="row"><span class="thumb-ph">' + I.person + '</span><div class="row-body" data-testlogin>' +
+        '<div class="row-title">Open the sign-in screen</div>' +
+        '<div class="row-meta">To try a client login, or to sign in as staff</div>' +
+      '</div><span class="row-trail">' + I.chev + '</span></div>' +
     '</div>';
 }
 
@@ -1249,6 +1277,12 @@ function openSettingsSheet() {
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
   const cl = sheetEl.querySelector('[data-clients]');
   if (cl) cl.addEventListener('click', openClientsSheet);
+  const tl = sheetEl.querySelector('[data-testlogin]');
+  if (tl) tl.addEventListener('click', () => {
+    state.forceSignIn = true;
+    closeSheet();
+    render();
+  });
   const so = sheetEl.querySelector('[data-signout]');
   if (so) so.addEventListener('click', doSignOut);
   const cm = sheetEl.querySelector('[data-changeme]');
@@ -1377,6 +1411,11 @@ function renderClientDetailSheet(c, loading) {
               '<div class="row-meta">' + (l.label && l.label !== l.username ? escapeHtml(l.label) + ' · ' : '') + 'added ' + escapeHtml(fmtWhen(l.created_at)) + '</div></div>' +
               '<button class="row-trail" data-dellogin="' + escapeHtml(l.id) + '" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button></div>').join('')
           : '<div class="empty-note">No login yet. Create one and send them the email and password.</div>') +
+    '</div>' +
+    '<div class="field-label">Their link</div>' +
+    '<div class="form-card" style="margin-bottom:16px;">' +
+      '<label class="form-field"><div class="ff-label">Send them this, with their username and password</div>' +
+        '<input id="clientLink" type="text" readonly value="' + escapeHtml(clientSignInUrl()) + '"></label>' +
     '</div>' +
     '<div class="field-label">Their items</div>' +
     '<div class="group" style="margin-bottom:16px;">' +
@@ -2716,6 +2755,8 @@ window.addEventListener('offline', () => { DB.online = false; render(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && !state.loading) refresh(); });
 
 (async function boot() {
+  // Read before the first render: ?login decides which screen opens.
+  if (new URLSearchParams(location.search).has('login')) state.forceSignIn = true;
   render();
   await DB.init();
   // Who is signed in decides which of the three shapes the app takes, so this
