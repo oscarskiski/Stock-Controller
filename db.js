@@ -288,22 +288,22 @@
   /* ---------------------------------------------------------
      Usernames, not email addresses. Supabase Auth requires an email and
      will not take a bare username, but nothing is ever sent to these
-     addresses, so the app makes one up from the company and the username
-     and never shows it to anyone. Built from the client's uuid rather than
-     its name so that renaming a client does not break their logins.
+     addresses, so the app makes one up from the username and never shows it
+     to anyone. Usernames are unique across everyone, which is what lets the
+     sign-in screen be two fields rather than three.
      --------------------------------------------------------- */
   function cleanUsername(name) {
     return String(name || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
   }
-  function accountEmail(who, username) {
+  function accountEmail(username) {
     const raw = String(username || '').trim();
     // An escape hatch for accounts made by hand in the Supabase dashboard
     // with a real address: type the whole address as the username and it is
-    // used verbatim, whatever company is picked. Nothing in the app creates
-    // accounts this way, but it means an existing one is not stranded.
+    // used verbatim. Nothing in the app creates accounts this way, but it
+    // means an existing one is not stranded.
     if (raw.includes('@')) return raw.toLowerCase();
     const domain = CFG.LOGIN_DOMAIN || 'clients.yardstock.app';
-    return cleanUsername(raw) + '.' + String(who || 'staff') + '@' + domain;
+    return cleanUsername(raw) + '@' + domain;
   }
 
   async function refreshSession() {
@@ -505,21 +505,13 @@
     get session() { return Session.data; },
     get signedIn() { return !!Session.token; },
 
-    /** who is a client id, or 'staff' for the factory's own login. */
-    async signIn(who, username, password) {
+    async signIn(username, password) {
       if (impl.mode !== 'supabase') throw new Error('Accounts need Supabase configured');
       const out = await authFetch('token?grant_type=password', {
-        email: accountEmail(who, username), password: String(password || '')
+        email: accountEmail(username), password: String(password || '')
       });
       Session.save(out);
       return out;
-    },
-
-    /** The companies offered on the sign-in screen. Readable signed-out, by
-        design — the picker has to be filled before anyone has an account. */
-    async listClientDirectory() {
-      if (impl.mode !== 'supabase') return [];
-      return await impl.rest('client_directory?select=id,name');
     },
 
     signOut() {
@@ -564,10 +556,16 @@
       const clean = cleanUsername(username);
       if (!clean) throw new Error('That username has no letters or digits in it');
       const out = await authFetch('signup', {
-        email: accountEmail(clientId, clean), password: String(password || '')
+        email: accountEmail(clean), password: String(password || '')
       });
       const userId = (out && out.user && out.user.id) || (out && out.id);
       if (!userId) throw new Error('Supabase did not return the new account — is "Confirm email" still on?');
+      // Supabase answers a duplicate sign-up with a user that has no identities
+      // rather than an error, so an already-taken username would look like it
+      // worked and then refuse to sign in.
+      if (out && out.user && out.user.identities && out.user.identities.length === 0) {
+        throw new Error('That username is already taken — pick another');
+      }
       await impl.rest('profiles', {
         method: 'POST',
         body: { id: userId, role: 'client', client_id: clientId, username: clean, label: label || clean },

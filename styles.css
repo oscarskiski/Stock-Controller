@@ -36,6 +36,10 @@ body {
 button, input, select, textarea { font-family: var(--sans); }
 select option { background: var(--bg-elevated-2); color: var(--label); }
 img { display: block; }
+/* Elements carry display:flex/grid, which outranks the user-agent rule for
+   [hidden] and leaves "hidden" buttons on screen — as the settings gear was
+   in the client view. Make hidden mean hidden. */
+[hidden] { display: none !important; }
 
 /* ---------- Nav header ---------- */
 .navheader {
@@ -657,15 +661,6 @@ img { display: block; }
 .auth-sub { font-size: 14.5px; color: var(--label-secondary); text-align: center; margin: 4px 0 22px; }
 .auth-banner { margin-bottom: 12px; }
 .auth-form { padding: 6px 16px; margin-bottom: 16px; }
-/* A select with no affordance reads as dead text, so give it a caret. The
-   rest of the app's selects sit in rows where a chevron is already present. */
-.auth-select { position: relative; }
-.auth-select::after {
-  content: ''; position: absolute; right: 2px; bottom: 17px; width: 7px; height: 7px;
-  border-right: 1.8px solid var(--label-tertiary); border-bottom: 1.8px solid var(--label-tertiary);
-  transform: rotate(45deg); pointer-events: none;
-}
-.auth-select select { padding-right: 20px; -webkit-appearance: none; appearance: none; }
 /* .sheet-save only carries the colours — the shape lives on ".sheet-actions
    button", which does not apply out here, so restate it. */
 .auth-go {

@@ -441,24 +441,8 @@ function wireBanner(el) {
    form, and the read-only summary a client sees instead of the app. Both
    render straight into #screenContent with the tab bar hidden. */
 
-/* The company picker has to be filled before anyone is signed in, so it comes
-   from the public client_directory view. Loaded once, lazily, on the first
-   render of the sign-in screen. */
-let signInDirectory = null;
-let signInWho = localStorage.getItem('ys_signin_who') || '';
-
-async function loadSignInDirectory() {
-  if (signInDirectory) return;
-  try { signInDirectory = await DB.listClientDirectory(); }
-  catch (e) { signInDirectory = []; }
-  if (appMode() === 'signin') render();
-}
-
 function signInScreenHtml() {
-  if (signInDirectory === null) loadSignInDirectory();
-  const list = signInDirectory || [];
   const site = CFG.SITE_NAME || 'Yard Stock';
-
   return '<div class="auth-screen">' +
     '<div class="auth-card">' +
       '<img class="auth-mark" src="icon-192.png" alt="">' +
@@ -468,13 +452,6 @@ function signInScreenHtml() {
       (state.authError ? '<div class="banner bad auth-banner">' + I.info + '<span>' + escapeHtml(state.authError) + '</span></div>' : '') +
 
       '<div class="form-card auth-form">' +
-        '<label class="form-field auth-select"><div class="ff-label">Who are you with?</div>' +
-          '<select id="authWho">' +
-            '<option value="staff" ' + (signInWho === 'staff' ? 'selected' : '') + '>' +
-              escapeHtml(site) + ' — staff</option>' +
-            list.map(c => '<option value="' + escapeHtml(c.id) + '" ' + (signInWho === c.id ? 'selected' : '') + '>' +
-              escapeHtml(c.name) + '</option>').join('') +
-          '</select></label>' +
         '<label class="form-field"><div class="ff-label">Username</div>' +
           '<input id="authUser" type="text" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="The username you were given"></label>' +
         '<label class="form-field"><div class="ff-label">Password</div>' +
@@ -494,11 +471,6 @@ function signInScreenHtml() {
 
 function wireSignIn(el) {
   const go = el.querySelector('#authGo');
-  const who = el.querySelector('#authWho');
-  who.addEventListener('change', () => {
-    signInWho = who.value;
-    localStorage.setItem('ys_signin_who', signInWho);
-  });
 
   const submit = async () => {
     const user = el.querySelector('#authUser').value;
@@ -506,23 +478,25 @@ function wireSignIn(el) {
     if (!user || !pass) { state.authError = 'Username and password, please.'; render(); return; }
     go.disabled = true; go.textContent = 'Signing in…';
     try {
-      await DB.signIn(who.value, user, pass);
+      await DB.signIn(user, pass);
       state.authError = '';
-      signInWho = who.value;
-      localStorage.setItem('ys_signin_who', signInWho);
+      state.forceSignIn = false;
       await loadProfile();
       await refresh();
     } catch (e) {
-      // GoTrue says "invalid login credentials" whether it was the username,
-      // the password or the wrong company, so the message has to cover all three.
+      // GoTrue says "invalid login credentials" for a wrong username and a
+      // wrong password alike, so the message has to cover both.
       state.authError = /invalid/i.test(e.message || '')
-        ? 'That did not work. Check the company, username and password.'
+        ? 'That username and password did not work.'
         : (e.message || 'Could not sign in');
       render();
     }
   };
+
   go.addEventListener('click', submit);
+  el.querySelector('#authUser').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') el.querySelector('#authPass').focus(); });
   el.querySelector('#authPass').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') submit(); });
+
   const back = el.querySelector('#authBack');
   if (back) back.addEventListener('click', () => {
     state.forceSignIn = false;
@@ -587,8 +561,8 @@ function openClientAccountSheet() {
     '<div class="sheet-title">' + escapeHtml(name || 'Your account') + '</div>' +
     '<div class="sheet-sub">Signed in as ' + escapeHtml((state.profile && state.profile.username) || 'you') + '</div>' +
     '<div class="field-group" style="margin-bottom:14px;">' +
-      '<div class="field-row"><span class="fname">Items allocated</span><span class="field-val">' + myClientProducts().length + '</span></div>' +
-      '<div class="field-row"><span class="fname">Last updated</span><span class="field-val">' +
+      '<div class="field-row"><span class="fname">Stock shown</span><span class="field-val">' + myClientProducts().length + ' item' + (myClientProducts().length === 1 ? '' : 's') + '</span></div>' +
+      '<div class="field-row" data-refreshnow style="cursor:pointer;"><span class="fname" style="color:var(--sys-blue);">Refresh now</span><span class="field-val">' +
         (DB.lastSync ? escapeHtml(fmtWhen(new Date(DB.lastSync).toISOString())) : '—') + '</span></div>' +
     '</div>' +
     '<div class="sheet-actions">' +
@@ -597,6 +571,7 @@ function openClientAccountSheet() {
     '</div>';
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
   sheetEl.querySelector('[data-signout]').addEventListener('click', doSignOut);
+  sheetEl.querySelector('[data-refreshnow]').addEventListener('click', async () => { closeSheet(); await refresh(true); });
   openSheet();
 }
 
@@ -1246,6 +1221,8 @@ function clientsSettingsRowHtml() {
 }
 
 function openSettingsSheet() {
+  // A client has no settings. Their only control is the account sheet.
+  if (isClientView()) { openClientAccountSheet(); return; }
   const mode = DB.mode === 'supabase' ? 'Shared (Supabase)' : 'Local to this device';
   const sync = DB.lastSync ? fmtWhen(new Date(DB.lastSync).toISOString()) : '—';
 
@@ -1384,7 +1361,6 @@ function openAddClientSheet() {
     try {
       await DB.createClient(name);
       state.clients = await DB.listClients();
-      signInDirectory = null;   // the sign-in picker must learn about them
       toast('Client added · ' + name, 'good');
       renderClientsSheet();
     } catch (e) {
@@ -1472,7 +1448,7 @@ function openAddLoginSheet(c) {
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
     '<div class="sheet-title">Login for ' + escapeHtml(c.name) + '</div>' +
-    '<div class="sheet-sub">They pick <strong>' + escapeHtml(c.name) + '</strong> on the sign-in screen, then use these. No email needed.</div>' +
+    '<div class="sheet-sub">Send them the link below with these two. No email needed.</div>' +
     '<div class="form-card">' +
       '<label class="form-field"><div class="ff-label">Username</div>' +
         '<input id="loginUser" type="text" autocapitalize="off" spellcheck="false" placeholder="e.g. sipho"></label>' +
@@ -1844,6 +1820,8 @@ function scannerSupported() {
 }
 
 function openScanSheet() {
+  // Scanning lands on a product detail sheet full of costs and suppliers.
+  if (isClientView()) return;
   renderScanSheet();
   openSheet();
   if (scannerSupported()) startScanner();
@@ -2751,7 +2729,7 @@ function renderPickProduct(dir) {
 
 /* ===================== Init ===================== */
 $('fabAdd').innerHTML = I.plus;
-$('fabAdd').addEventListener('click', () => { if (!state.loading) openFabSheet(); });
+$('fabAdd').addEventListener('click', () => { if (!state.loading && !isClientView()) openFabSheet(); });
 $('navMe').addEventListener('click', () => {
   if (isClientView()) openClientAccountSheet(); else openPersonSheet();
 });

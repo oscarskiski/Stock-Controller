@@ -21,10 +21,10 @@
 -- ---------------------------------------------------------
 -- Creating the staff login (do this BEFORE the policies below)
 -- ---------------------------------------------------------
--- Nobody signs in with an email address. The app asks for a company, a
--- username and a password, and builds an address out of sight in the form
+-- Nobody signs in with an email address. The app asks for a username and a
+-- password, and builds an address out of sight in the form
 --
---     <username>.<client-uuid-or-staff>@<LOGIN_DOMAIN>
+--     <username>@<LOGIN_DOMAIN>
 --
 -- where LOGIN_DOMAIN comes from config.js and defaults to
 -- clients.yardstock.app. No mail is ever sent to it.
@@ -32,7 +32,7 @@
 -- So for a staff login with the username "factory", create the user with
 -- exactly this address:
 --
---     factory.staff@clients.yardstock.app
+--     factory@clients.yardstock.app
 --
 -- In the Supabase dashboard: Authentication → Users → Add user. Paste that
 -- address, set a password, and tick "Auto Confirm User". Then copy the new
@@ -42,8 +42,8 @@
 --   values ('PASTE-THE-UUID-HERE', 'staff', 'factory', 'Factory floor')
 --   on conflict (id) do update set role = 'staff', username = 'factory';
 --
--- Your team then signs in by picking "(staff)" from the company list and
--- entering factory + that password.
+-- Your team then signs in with factory + that password. There is no company
+-- to pick: usernames are unique across everyone.
 --
 -- Also turn OFF Authentication → Providers → Email → "Confirm email", so
 -- client logins created from the app's Settings screen work immediately
@@ -91,12 +91,6 @@ create policy profiles_own on public.profiles for select to authenticated
   using (id = auth.uid());
 create policy profiles_staff on public.profiles for all to authenticated
   using (public.is_staff()) with check (public.is_staff());
-
--- The sign-in screen's company picker reads this view before anyone has a
--- session, so it must stay readable by anon. It exposes client names and
--- nothing else. If you would rather your customer list were not public,
--- revoke it and have clients type their company name instead.
-grant select on public.client_directory to anon, authenticated;
 
 -- ---------------------------------------------------------
 -- Take the anon key's access away. This is the line that makes the
