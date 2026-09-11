@@ -547,10 +547,30 @@
       return await impl.rest('profiles?select=*&role=eq.client&client_id=eq.' + clientId + '&order=created_at.desc');
     },
 
-    /** Everyone at Elmos. These see the whole app. */
+    /** Everyone who works here — the boss and the shop floor alike. */
     async listStaffLogins() {
       if (impl.mode !== 'supabase') return [];
-      return await impl.rest('profiles?select=*&role=eq.staff&order=created_at.desc');
+      return await impl.rest('profiles?select=*&role=in.(admin,staff)&order=created_at.desc');
+    },
+
+    /** Whether anybody who works here has an account yet. Asked once, on a
+        cold start, to decide between the sign-in screen and first-run setup.
+
+        Deliberately not "any account at all": a database holding only client
+        logins has nobody who could create the owner account, and the sign-in
+        screen would be a door with no key behind it.
+
+        After the access cutover the anon key cannot read profiles, so a
+        failure here answers "yes, somebody has set this up" — which is sound,
+        because the cutover cannot have been run before that was true. */
+    async anyStaffAccounts() {
+      if (impl.mode !== 'supabase') return true;
+      try {
+        const rows = await impl.rest('profiles?select=id&role=in.(admin,staff)&limit=1');
+        return !!(rows && rows.length);
+      } catch (e) {
+        return true;
+      }
     },
 
     /** Create a client login. Uses the ordinary sign-up endpoint rather than
@@ -558,7 +578,7 @@
         must never be shipped in a page. A self-signed-up account with no
         profiles row can read nothing, so leaving sign-up open is safe. */
     async createLogin(opts) {
-      const role = opts.role === 'staff' ? 'staff' : 'client';
+      const role = ['admin', 'staff', 'client'].includes(opts.role) ? opts.role : 'client';
       const clientId = role === 'client' ? opts.clientId : null;
       const username = opts.username, password = opts.password, label = opts.label;
       if (impl.mode !== 'supabase') throw new Error('Accounts need Supabase configured');

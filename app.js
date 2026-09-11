@@ -186,10 +186,15 @@ const state = {
      only a staff member who opened it from Settings is offered a way back
      into the app — a client following the link is not. */
   forceSignIn: false,
-  signInFrom: ''
+  signInFrom: '',
+  /* True only until the very first account exists. */
+  needsSetup: false
 };
 
 function isClientView() { return !!(state.profile && state.profile.role === 'client'); }
+/** The boss. The only one who can create or remove accounts; everyone else
+    at the factory sees the same stock but cannot hand out logins. */
+function isAdmin() { return !!(state.profile && state.profile.role === 'admin'); }
 /** The signed-in client's own items. RLS returns only these once the cutover
     has run, but until then the server still hands over everything, so the
     filter has to exist here too — otherwise a client would briefly see the
@@ -296,14 +301,16 @@ function renderHeader() {
   if (mode !== 'staff') {
     // A client gets their own name in the title and one button: their account.
     const clientName = (state.profile && state.profile.clients && state.profile.clients.name) || '';
-    $('navTitle').textContent = mode === 'signin' ? (CFG.SITE_NAME || 'Yard Stock') : (clientName || 'Your stock');
     const heldCount = mode === 'client' ? myClientProducts().length : 0;
-    $('navSub').textContent = mode === 'signin'
-      ? 'Sign in to continue'
-      : heldCount + ' item' + (heldCount === 1 ? '' : 's') + ' held for you';
+    $('navTitle').textContent = mode === 'client' ? (clientName || 'Your stock') : (CFG.SITE_NAME || 'Yard Stock');
+    $('navSub').textContent = mode === 'client'
+      ? heldCount + ' item' + (heldCount === 1 ? '' : 's') + ' held for you'
+      : 'Sign in to continue';
+    // The whole header is hidden on the sign-in and setup screens anyway; a
+    // client keeps only the account button.
     scan.hidden = true;
     gear.hidden = true;
-    me.hidden = mode === 'signin';
+    me.hidden = mode !== 'client';
     if (mode === 'client') me.innerHTML = '<span class="avatar">' + escapeHtml(initials(clientName || '?')) + '</span><span class="mename">Account</span>';
     return;
   }
@@ -359,10 +366,10 @@ function renderTabs() {
     session and there is none, the client's read-only summary, and the full
     shop-floor app. The first two hide the tab bar and the add button. */
 function appMode() {
-  // REQUIRE_LOGIN is the after-cutover state, where nobody gets in without
-  // an account. Before then the sign-in screen still has to be reachable —
-  // clients need it, and staff need it to test one — hence forceSignIn,
-  // set by the ?login link or the Settings row.
+  if (!DB.signedIn && state.needsSetup) return 'setup';
+  // forceSignIn covers the case where REQUIRE_LOGIN is off and someone still
+  // wants the sign-in screen — a client following their link, or the boss
+  // checking a login from Settings.
   if (!DB.signedIn && (CFG.REQUIRE_LOGIN || state.forceSignIn)) return 'signin';
   if (isClientView()) return 'client';
   return 'staff';
@@ -380,11 +387,12 @@ function clientSignInUrl() {
 function render() {
   const mode = appMode();
   document.body.classList.toggle('chrome-off', mode !== 'staff');
-  document.body.classList.toggle('auth-mode', mode === 'signin');
+  document.body.classList.toggle('auth-mode', mode === 'signin' || mode === 'setup');
   renderHeader();
   renderTabs();
   const el = $('screenContent');
 
+  if (mode === 'setup') { el.innerHTML = setupScreenHtml(); wireSetup(el); return; }
   if (mode === 'signin') { el.innerHTML = signInScreenHtml(); wireSignIn(el); return; }
   if (state.loading) { el.innerHTML = '<div class="spinner"></div>'; return; }
 
@@ -443,6 +451,59 @@ function wireBanner(el) {
    Two screens that stand outside the normal tab structure: the sign-in
    form, and the read-only summary a client sees instead of the app. Both
    render straight into #screenContent with the tab bar hidden. */
+
+/* First run only: no account exists yet, so there is nobody who could create
+   one. This makes the first account, and it is an admin — the boss. Once any
+   account exists this screen never appears again. */
+function setupScreenHtml() {
+  const site = CFG.SITE_NAME || 'Yard Stock';
+  return '<div class="auth-screen">' +
+    '<div class="auth-card">' +
+      '<img class="auth-mark" src="icon-192.png" alt="">' +
+      '<div class="auth-title">Set up ' + escapeHtml(site) + '</div>' +
+      '<div class="auth-sub">Nobody who works here has a login yet. Make the owner account &mdash; the only one that can create logins for anyone else.</div>' +
+
+      (state.authError ? '<div class="banner bad auth-banner">' + I.info + '<span>' + escapeHtml(state.authError) + '</span></div>' : '') +
+
+      '<div class="form-card auth-form">' +
+        '<label class="form-field"><div class="ff-label">Your name</div>' +
+          '<input id="setupName" type="text" placeholder="e.g. Oscar"></label>' +
+        '<label class="form-field"><div class="ff-label">Username</div>' +
+          '<input id="setupUser" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="e.g. oscar"></label>' +
+        '<label class="form-field"><div class="ff-label">Password</div>' +
+          '<input id="setupPass" type="text" value="' + escapeHtml(suggestPassword()) + '"></label>' +
+      '</div>' +
+
+      '<button class="sheet-save auth-go" id="setupGo" type="button">Create the owner account</button>' +
+      '<div class="status-line auth-foot">Write the password down before you tap this. You can change it later in Supabase, but not from here.</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function wireSetup(el) {
+  const go = el.querySelector('#setupGo');
+  go.addEventListener('click', async () => {
+    const name = (el.querySelector('#setupName').value || '').trim();
+    const user = (el.querySelector('#setupUser').value || '').trim();
+    const pass = el.querySelector('#setupPass').value || '';
+    if (!user) { state.authError = 'Pick a username.'; render(); return; }
+    if (pass.length < 8) { state.authError = 'The password needs at least 8 characters.'; render(); return; }
+    go.disabled = true; go.textContent = 'Creating…';
+    try {
+      await DB.createLogin({ role: 'admin', username: user, password: pass, label: name || user });
+      await DB.signIn(user, pass);
+      state.needsSetup = false;
+      state.authError = '';
+      await loadProfile();
+      if (state.profile && state.profile.label && !state.me) setMe(state.profile.label);
+      await refresh();
+      toast('Signed in as ' + user, 'good');
+    } catch (e) {
+      state.authError = e.message || 'Could not create that account';
+      render();
+    }
+  });
+}
 
 function signInScreenHtml() {
   const site = CFG.SITE_NAME || 'Yard Stock';
@@ -1260,7 +1321,7 @@ function openSettingsSheet() {
         ).join('')
       : '<div class="empty-note">No names on the list yet. Add everyone who works the store room — no passwords, they just tap their name once.</div>') +
     '</div>' +
-    (DB.mode === 'supabase' ? clientsSettingsRowHtml() : '') +
+    (DB.mode === 'supabase' && isAdmin() ? clientsSettingsRowHtml() : '') +
     '<div class="field-label">Data</div>' +
     '<div class="field-group" style="margin-bottom:4px;">' +
       '<div class="field-row"><span class="fname">Mode</span><span class="field-val">' + mode + '</span></div>' +
@@ -1330,6 +1391,9 @@ let staffLogins = [];
 let clientLogins = [];
 
 async function openAccountsSheet() {
+  // Only the boss hands out logins. The row is hidden for everyone else, and
+  // this refuses as well, so a stale handler cannot open it.
+  if (!isAdmin()) { toast('Only the owner account can manage logins'); return; }
   renderAccountsSheet(true);
   openSheet();
   try { staffLogins = await DB.listStaffLogins(); } catch (e) { staffLogins = []; }
@@ -1384,7 +1448,7 @@ function loginRowHtml(l) {
       '<div class="row-title">' + escapeHtml(l.username || 'login') +
         (isMe ? ' <span class="meta-chip" style="background:rgba(10,132,255,.2);color:var(--sys-blue)">you</span>' : '') + '</div>' +
       '<div class="row-meta">' + (l.label && l.label !== l.username ? escapeHtml(l.label) + ' · ' : '') +
-        'added ' + escapeHtml(fmtWhen(l.created_at)) + '</div></div>' +
+        (l.role === 'admin' ? 'owner · can create accounts' : l.role === 'staff' ? 'stock only' : 'client') + '</div></div>' +
     (isMe ? '<span class="row-trail"></span>'
           : '<button class="row-trail" data-dellogin="' + escapeHtml(l.id) + '" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button>') +
   '</div>';
@@ -1511,18 +1575,33 @@ function openAddLoginSheet(c) {
       : 'Sees only ' + escapeHtml(c.name) + '&rsquo;s stock: photo, name and quantity.') + '</div>' +
     '<div class="form-card">' +
       '<label class="form-field"><div class="ff-label">Username</div>' +
-        '<input id="loginUser" type="text" autocapitalize="off" spellcheck="false" placeholder="' + (staff ? 'e.g. oscar' : 'e.g. rottie') + '"></label>' +
+        '<input id="loginUser" type="text" autocapitalize="off" spellcheck="false" placeholder="' + (staff ? 'e.g. pieter' : 'e.g. rottie') + '"></label>' +
       '<label class="form-field"><div class="ff-label">Password</div>' +
         '<input id="loginPass" type="text" value="' + escapeHtml(suggestion) + '"></label>' +
       '<label class="form-field"><div class="ff-label">Their name</div>' +
-        '<input id="loginLabel" type="text" placeholder="' + (staff ? 'e.g. Oscar, store room' : 'e.g. Sipho, purchasing') + '"></label>' +
+        '<input id="loginLabel" type="text" placeholder="' + (staff ? 'e.g. Pieter, store room' : 'e.g. Sipho, purchasing') + '"></label>' +
     '</div>' +
+    (staff
+      ? '<div class="field-label">Can they create accounts?</div>' +
+        '<div class="segmented">' +
+          '<button class="seg-btn active" data-newrole="staff" type="button">No — stock only</button>' +
+          '<button class="seg-btn" data-newrole="admin" type="button">Yes — another owner</button>' +
+        '</div>'
+      : '') +
     '<div class="form-hint">Copy the password before you tap Create &mdash; it is not shown again. Usernames are unique across everyone: letters, digits, dots, dashes and underscores.</div>' +
     '<div class="sheet-actions">' +
       '<button class="sheet-cancel" data-back type="button">Cancel</button>' +
       '<button class="sheet-save" data-save type="button">Create</button>' +
     '</div>';
 
+  // Everyone on the team sees all the stock; this only decides whether they
+  // can also hand out logins. Staff is the right answer for almost everyone.
+  let newRole = 'staff';
+  sheetEl.querySelectorAll('[data-newrole]').forEach(b => b.addEventListener('click', () => {
+    newRole = b.getAttribute('data-newrole');
+    sheetEl.querySelectorAll('[data-newrole]').forEach(x =>
+      x.classList.toggle('active', x.getAttribute('data-newrole') === newRole));
+  }));
   sheetEl.querySelector('[data-back]').addEventListener('click', () => staff ? openAccountsSheet() : openClientDetailSheet(c.id));
   sheetEl.querySelector('[data-save]').addEventListener('click', async () => {
     const user = ($('loginUser').value || '').trim();
@@ -1534,7 +1613,7 @@ function openAddLoginSheet(c) {
     btn.disabled = true; btn.textContent = 'Creating…';
     try {
       await DB.createLogin({
-        role: staff ? 'staff' : 'client',
+        role: staff ? newRole : 'client',
         clientId: staff ? null : c.id,
         username: user, password: pass, label: label || user
       });
@@ -2817,7 +2896,11 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && !s
   // Who is signed in decides which of the three shapes the app takes, so this
   // has to settle before anything is fetched.
   await loadProfile();
-  if (appMode() === 'signin') { state.loading = false; render(); return bootServiceWorker(); }
+  // Nobody signed in and no account anywhere: this is a brand new install and
+  // somebody has to be able to make the first login.
+  if (!DB.signedIn) state.needsSetup = !(await DB.anyStaffAccounts());
+  const mode = appMode();
+  if (mode === 'signin' || mode === 'setup') { state.loading = false; render(); return bootServiceWorker(); }
   await refresh();
 
   // A scanned Kanban card lands here as ?item=<id> — jump straight to it,

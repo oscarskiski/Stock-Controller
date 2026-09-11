@@ -263,3 +263,30 @@ create unique index if not exists profiles_username_idx on public.profiles (lowe
 -- An earlier design needed the client names readable by anyone opening the
 -- app, to fill a company picker. It does not any more.
 drop view if exists public.client_directory;
+
+-- ---------------------------------------------------------
+-- Three levels of access
+-- ---------------------------------------------------------
+-- 'admin'  — the boss. Sees everything and is the only one who can
+--            create or remove accounts.
+-- 'staff'  — works at the factory. Sees all stock and books it in and
+--            out, but cannot make accounts for anyone.
+-- 'client' — a customer. Reads the items allocated to their company
+--            and nothing else.
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check
+  check (role in ('admin', 'staff', 'client'));
+
+-- is_staff is "works here", which the boss does too — it is what gates
+-- the stock itself. Account management is gated by is_admin instead.
+create or replace function public.is_staff() returns boolean
+  language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role in ('admin', 'staff'))
+$$;
+
+create or replace function public.is_admin() returns boolean
+  language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+$$;
+
+grant execute on function public.is_admin() to anon, authenticated;

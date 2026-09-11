@@ -30,12 +30,16 @@ window.CONFIG = {
   // exist would orphan every one of them.
   LOGIN_DOMAIN: 'clients.yardstock.app',
 
-  // Set to true ONLY after running schema-clients-cutover.sql and confirming
-  // a staff account can sign in. It makes the app demand a session, which is
-  // what the database will start demanding at the same moment. Flipping it
-  // early locks your own team out; flipping it late leaves client stock
-  // readable by anyone holding the anon key above.
-  REQUIRE_LOGIN: false,
+  // The app opens on a sign-in page and shows nothing until somebody signs
+  // in. There is no lock-out risk in this being true: a database with no
+  // accounts in it puts the app into first-run setup instead, which makes
+  // the owner account.
+  //
+  // This is the app refusing, not the database. Until
+  // schema-clients-cutover.sql is run, the anon key below still reads every
+  // row, so the restriction holds for anyone using the app and not for
+  // someone querying the API directly. Run the cutover to close that.
+  REQUIRE_LOGIN: true,
 
   // Shown next to Cost / Price fields in the item form, e.g. 'R', '£', '$'.
   // Leave blank to show plain numbers with no currency symbol.
