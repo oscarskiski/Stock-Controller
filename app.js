@@ -377,6 +377,7 @@ function clientSignInUrl() {
 function render() {
   const mode = appMode();
   document.body.classList.toggle('chrome-off', mode !== 'staff');
+  document.body.classList.toggle('auth-mode', mode === 'signin');
   renderHeader();
   renderTabs();
   const el = $('screenContent');
@@ -456,29 +457,38 @@ async function loadSignInDirectory() {
 function signInScreenHtml() {
   if (signInDirectory === null) loadSignInDirectory();
   const list = signInDirectory || [];
+  const site = CFG.SITE_NAME || 'Yard Stock';
 
-  return '<div class="auth-card">' +
-    '<div class="auth-title">' + escapeHtml(CFG.SITE_NAME || 'Yard Stock') + '</div>' +
-    '<div class="auth-sub">Sign in to see your stock.</div>' +
-    (state.authError ? '<div class="auth-error">' + escapeHtml(state.authError) + '</div>' : '') +
-    '<div class="form-card">' +
-      '<label class="form-field"><div class="ff-label">Who are you with?</div>' +
-        '<select id="authWho">' +
-          '<option value="staff" ' + (signInWho === 'staff' ? 'selected' : '') + '>' +
-            escapeHtml(CFG.SITE_NAME || 'Our team') + ' (staff)</option>' +
-          list.map(c => '<option value="' + escapeHtml(c.id) + '" ' + (signInWho === c.id ? 'selected' : '') + '>' +
-            escapeHtml(c.name) + '</option>').join('') +
-        '</select></label>' +
-      '<label class="form-field"><div class="ff-label">Username</div>' +
-        '<input id="authUser" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="The username you were given"></label>' +
-      '<label class="form-field"><div class="ff-label">Password</div>' +
-        '<input id="authPass" type="password" autocomplete="current-password" placeholder="Your password"></label>' +
+  return '<div class="auth-screen">' +
+    '<div class="auth-card">' +
+      '<img class="auth-mark" src="icon-192.png" alt="">' +
+      '<div class="auth-title">' + escapeHtml(site) + '</div>' +
+      '<div class="auth-sub">Sign in to see your stock</div>' +
+
+      (state.authError ? '<div class="banner bad auth-banner">' + I.info + '<span>' + escapeHtml(state.authError) + '</span></div>' : '') +
+
+      '<div class="form-card auth-form">' +
+        '<label class="form-field auth-select"><div class="ff-label">Who are you with?</div>' +
+          '<select id="authWho">' +
+            '<option value="staff" ' + (signInWho === 'staff' ? 'selected' : '') + '>' +
+              escapeHtml(site) + ' — staff</option>' +
+            list.map(c => '<option value="' + escapeHtml(c.id) + '" ' + (signInWho === c.id ? 'selected' : '') + '>' +
+              escapeHtml(c.name) + '</option>').join('') +
+          '</select></label>' +
+        '<label class="form-field"><div class="ff-label">Username</div>' +
+          '<input id="authUser" type="text" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="The username you were given"></label>' +
+        '<label class="form-field"><div class="ff-label">Password</div>' +
+          '<input id="authPass" type="password" autocomplete="current-password" placeholder="Your password"></label>' +
+      '</div>' +
+
+      '<button class="sheet-save auth-go" id="authGo" type="button">Sign in</button>' +
+
+      (CFG.REQUIRE_LOGIN ? '' :
+        '<button class="link-btn auth-back" id="authBack" type="button">Back to the app</button>') +
+
+      '<div class="status-line auth-foot">Your username and password come from ' + escapeHtml(site) + '.<br>' +
+        'Sign in once and this device stays signed in.</div>' +
     '</div>' +
-    '<button class="sheet-save auth-go" id="authGo" type="button">Sign in</button>' +
-    '<div class="status-line">Staff: sign in once on this phone and it stays signed in.<br>' +
-      'Clients: your username and password come from us.</div>' +
-    (CFG.REQUIRE_LOGIN ? '' :
-      '<button class="link-btn" id="authBack" type="button" style="display:block;margin:14px auto 0;">Back to the app</button>') +
   '</div>';
 }
 

@@ -636,15 +636,50 @@ img { display: block; }
 /* Explanatory line under a form control whose effect is not obvious */
 .form-hint { font-size: 12.5px; color: var(--label-tertiary); line-height: 1.45; margin: 0 3px 4px; }
 
-/* ---------- Sign-in screen ---------- */
-.auth-card { max-width: 420px; margin: 8vh auto 0; padding: 0 2px; }
-.auth-title { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 4px; }
-.auth-sub { font-size: 14.5px; color: var(--label-tertiary); margin-bottom: 18px; }
-.auth-error {
-  background: rgba(255,69,58,0.14); color: var(--sys-red); border-radius: var(--r-md);
-  padding: 11px 13px; font-size: 13.5px; line-height: 1.45; margin-bottom: 12px;
+/* ---------- Sign-in screen ----------
+   The nav header is hidden here (see .auth-mode below), so this screen owns
+   the whole viewport and centres itself. Everything inside is the app's
+   ordinary furniture — form-card, form-field, sheet-save — so signing in
+   looks like the rest of the app rather than a web form bolted on. */
+.auth-screen {
+  min-height: calc(100vh - 60px); min-height: calc(100dvh - 60px);
+  display: flex; align-items: center; justify-content: center; padding: 24px 0 40px;
 }
-.auth-go { width: 100%; margin-top: 14px; }
+.auth-card { width: 100%; max-width: 380px; }
+.auth-mark {
+  width: 62px; height: 62px; border-radius: 15px; margin: 0 auto 16px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+}
+.auth-title {
+  font-size: 27px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1;
+  text-align: center; color: var(--label);
+}
+.auth-sub { font-size: 14.5px; color: var(--label-secondary); text-align: center; margin: 4px 0 22px; }
+.auth-banner { margin-bottom: 12px; }
+.auth-form { padding: 6px 16px; margin-bottom: 16px; }
+/* A select with no affordance reads as dead text, so give it a caret. The
+   rest of the app's selects sit in rows where a chevron is already present. */
+.auth-select { position: relative; }
+.auth-select::after {
+  content: ''; position: absolute; right: 2px; bottom: 17px; width: 7px; height: 7px;
+  border-right: 1.8px solid var(--label-tertiary); border-bottom: 1.8px solid var(--label-tertiary);
+  transform: rotate(45deg); pointer-events: none;
+}
+.auth-select select { padding-right: 20px; -webkit-appearance: none; appearance: none; }
+/* .sheet-save only carries the colours — the shape lives on ".sheet-actions
+   button", which does not apply out here, so restate it. */
+.auth-go {
+  width: 100%; border: none; border-radius: var(--r-pill); padding: 14px;
+  font-family: var(--sans); font-size: 15.5px; font-weight: 700; cursor: pointer;
+}
+.auth-go:active { transform: scale(0.98); }
+.auth-back { display: block; margin: 16px auto 0; }
+.auth-foot { margin-top: 20px; }
+
+/* Signing in owns the screen: no title bar to duplicate the heading, no tab
+   bar to a part of the app you cannot reach yet. */
+.auth-mode .navheader { display: none; }
+.auth-mode .wrap { padding-top: 0; }
 
 /* ---------- Client summary ---------- */
 /* Two across on a phone, more as the screen allows: a client wants to scan
