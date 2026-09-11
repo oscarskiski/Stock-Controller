@@ -94,6 +94,8 @@ img { display: block; }
 .meta-chip.loc { background: rgba(100,210,255,0.16); color: var(--sys-teal); font-weight: 700; letter-spacing: 0.02em; }
 .meta-chip.code { background: rgba(142,142,147,0.22); color: var(--label-secondary); font-weight: 600; }
 .meta-chip.cat { background: rgba(191,90,242,0.18); color: var(--sys-purple); }
+/* Whose stock it is — only ever shown to staff */
+.meta-chip.client { background: rgba(100,210,255,0.18); color: var(--sys-teal); }
 
 /* ---------- Product row ---------- */
 .thumb {
@@ -630,3 +632,46 @@ img { display: block; }
 }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* Explanatory line under a form control whose effect is not obvious */
+.form-hint { font-size: 12.5px; color: var(--label-tertiary); line-height: 1.45; margin: 0 3px 4px; }
+
+/* ---------- Sign-in screen ---------- */
+.auth-card { max-width: 420px; margin: 8vh auto 0; padding: 0 2px; }
+.auth-title { font-size: 28px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 4px; }
+.auth-sub { font-size: 14.5px; color: var(--label-tertiary); margin-bottom: 18px; }
+.auth-error {
+  background: rgba(255,69,58,0.14); color: var(--sys-red); border-radius: var(--r-md);
+  padding: 11px 13px; font-size: 13.5px; line-height: 1.45; margin-bottom: 12px;
+}
+.auth-go { width: 100%; margin-top: 14px; }
+
+/* ---------- Client summary ---------- */
+/* Two across on a phone, more as the screen allows: a client wants to scan
+   photos and numbers, not read a table. */
+.client-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px; margin-bottom: 8px;
+}
+.client-card {
+  background: var(--bg-elevated); border-radius: var(--r-lg); overflow: hidden;
+  display: flex; flex-direction: column;
+}
+.client-photo { width: 100%; aspect-ratio: 4/3; object-fit: cover; background: var(--bg-elevated-2); }
+.client-photo-ph {
+  display: flex; align-items: center; justify-content: center; color: var(--label-tertiary);
+}
+.client-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 4px; }
+.client-name { font-size: 14.5px; font-weight: 600; line-height: 1.3; }
+.client-qty {
+  font-size: 22px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+  color: var(--sys-green); display: flex; align-items: baseline; gap: 5px;
+}
+.client-qty.low { color: var(--sys-orange); }
+.client-unit { font-size: 12.5px; font-weight: 600; color: var(--label-tertiary); letter-spacing: 0; }
+
+/* With no tab bar there is nothing to clear at the foot of the page, and no
+   add button belongs on a read-only screen. */
+.chrome-off #tabbar { display: none; }
+.chrome-off .wrap { padding-bottom: 24px; }
+.chrome-off #fabAdd { display: none; }

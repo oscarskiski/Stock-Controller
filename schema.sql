@@ -192,3 +192,57 @@ create policy photos_write  on storage.objects for insert to anon, authenticated
   with check (bucket_id = 'product-photos');
 create policy photos_update on storage.objects for update to anon, authenticated
   using (bucket_id = 'product-photos') with check (bucket_id = 'product-photos');
+
+-- ---------------------------------------------------------
+-- Clients and accounts
+-- ---------------------------------------------------------
+-- Some of the stock on the racks belongs to customers rather than
+-- to us. Each such item carries a client_id; items with a null
+-- client_id are our own. A client signs in and sees only their own
+-- rows, enforced below by RLS rather than by the app — the anon key
+-- is public, so a UI filter would be decorative.
+create table if not exists public.clients (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  created_at  timestamptz not null default now()
+);
+
+alter table public.products add column if not exists client_id uuid references public.clients(id) on delete set null;
+create index if not exists products_client_idx on public.products (client_id);
+
+-- One row per signed-in user, saying what they are allowed to be.
+-- 'staff' is the shop floor (one shared factory login per device);
+-- 'client' is a customer, tied to exactly one clients row.
+create table if not exists public.profiles (
+  id          uuid primary key references auth.users(id) on delete cascade,
+  role        text not null default 'client' check (role in ('staff', 'client')),
+  client_id   uuid references public.clients(id) on delete cascade,
+  label       text,
+  created_at  timestamptz not null default now()
+);
+
+-- security definer so the policies below can read profiles without
+-- recursing through profiles' own RLS.
+create or replace function public.is_staff() returns boolean
+  language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'staff')
+$$;
+
+create or replace function public.my_client_id() returns uuid
+  language sql stable security definer set search_path = public as $$
+  select client_id from public.profiles where id = auth.uid() and role = 'client'
+$$;
+
+alter table public.clients  enable row level security;
+alter table public.profiles enable row level security;
+
+-- Stage 1 keeps the shop floor working on the anon key exactly as before.
+-- schema-clients-cutover.sql is what closes that door; run it only once a
+-- staff login exists and has been tested.
+drop policy if exists clients_all  on public.clients;
+drop policy if exists profiles_all on public.profiles;
+create policy clients_all  on public.clients  for all to anon, authenticated using (true) with check (true);
+create policy profiles_all on public.profiles for all to anon, authenticated using (true) with check (true);
+
+grant all on public.clients, public.profiles to anon, authenticated;
+grant execute on function public.is_staff(), public.my_client_id() to anon, authenticated;

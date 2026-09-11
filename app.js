@@ -174,8 +174,30 @@ const state = {
   actFilter: 'All',
   openRacks: {},
   loading: true,
-  error: ''
+  error: '',
+  /* The signed-in account's profile row, once fetched. null means nobody is
+     signed in — which, before the access cutover, is the normal shop-floor
+     state. role 'client' puts the app into the stripped-back client view. */
+  profile: null,
+  clients: [],
+  authError: ''
 };
+
+function isClientView() { return !!(state.profile && state.profile.role === 'client'); }
+/** The signed-in client's own items. RLS returns only these once the cutover
+    has run, but until then the server still hands over everything, so the
+    filter has to exist here too — otherwise a client would briefly see the
+    whole yard. */
+function myClientProducts() {
+  const mine = state.profile && state.profile.client_id;
+  return state.products
+    .filter(p => !p.archived && p.client_id && p.client_id === mine)
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+}
+function clientNameOf(p) {
+  const c = state.clients.find(c => c.id === p.client_id);
+  return c ? c.name : '';
+}
 
 function setMe(name) {
   state.me = name || '';
@@ -212,13 +234,22 @@ function movementProductName(m) {
 async function refresh(showSpinner) {
   if (showSpinner) { state.loading = true; render(); }
   try {
-    const [products, movements, people, cards] = await Promise.all([
-      DB.listProducts(), DB.listMovements(300), DB.listPeople(), DB.listReorderCards()
-    ]);
-    state.products = products || [];
-    state.movements = movements || [];
-    state.people = people || [];
-    state.reorderCards = cards || [];
+    if (isClientView()) {
+      // A client may read their own products and nothing else — asking for the
+      // team list or the movement log would simply come back empty or refused.
+      state.products = (await DB.listProducts()) || [];
+      state.movements = []; state.people = []; state.reorderCards = [];
+    } else {
+      const [products, movements, people, cards, clients] = await Promise.all([
+        DB.listProducts(), DB.listMovements(300), DB.listPeople(), DB.listReorderCards(),
+        DB.listClients().catch(() => [])
+      ]);
+      state.products = products || [];
+      state.movements = movements || [];
+      state.people = people || [];
+      state.reorderCards = cards || [];
+      state.clients = clients || [];
+    }
     state.error = '';
   } catch (e) {
     state.error = e && e.message ? e.message : 'Could not load stock';
@@ -252,6 +283,26 @@ const TABS = [
 ];
 
 function renderHeader() {
+  const mode = appMode();
+  const me = $('navMe');
+  const scan = $('navScan'), gear = $('navGear');
+
+  if (mode !== 'staff') {
+    // A client gets their own name in the title and one button: their account.
+    const clientName = (state.profile && state.profile.clients && state.profile.clients.name) || '';
+    $('navTitle').textContent = mode === 'signin' ? (CFG.SITE_NAME || 'Yard Stock') : (clientName || 'Your stock');
+    const heldCount = mode === 'client' ? myClientProducts().length : 0;
+    $('navSub').textContent = mode === 'signin'
+      ? 'Sign in to continue'
+      : heldCount + ' item' + (heldCount === 1 ? '' : 's') + ' held for you';
+    scan.hidden = true;
+    gear.hidden = true;
+    me.hidden = mode === 'signin';
+    if (mode === 'client') me.innerHTML = '<span class="avatar">' + escapeHtml(initials(clientName || '?')) + '</span><span class="mename">Account</span>';
+    return;
+  }
+  scan.hidden = false; gear.hidden = false; me.hidden = false;
+
   const dateStr = new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
   const rackLetters = Array.from(new Set(activeProducts().map(p => rackOf(p.location)).filter(r => r && r !== '?'))).sort();
   const titles = {
@@ -266,7 +317,6 @@ function renderHeader() {
   $('navTitle').textContent = t;
   $('navSub').textContent = s;
 
-  const me = $('navMe');
   if (state.me) {
     me.innerHTML = '<span class="avatar">' + escapeHtml(initials(state.me)) + '</span>' +
                    '<span class="mename">' + escapeHtml(state.me.split(/\s+/)[0]) + '</span>';
@@ -276,6 +326,9 @@ function renderHeader() {
 }
 
 function renderTabs() {
+  // The tab bar belongs to the shop floor. A client has one screen, and
+  // nobody signing in has any yet.
+  if (appMode() !== 'staff') { $('tabbar').innerHTML = ''; return; }
   const lowCount = activeProducts().filter(needsAttention).length;
   const toOrderCount = state.reorderCards.filter(c => c.status === 'to_order').length;
   $('tabbar').innerHTML = TABS.map(tab => {
@@ -296,12 +349,31 @@ function renderTabs() {
 }
 
 /* ===================== Render root ===================== */
+/** Three shapes, not one: the sign-in form when the database demands a
+    session and there is none, the client's read-only summary, and the full
+    shop-floor app. The first two hide the tab bar and the add button. */
+function appMode() {
+  if (CFG.REQUIRE_LOGIN && !DB.signedIn) return 'signin';
+  if (isClientView()) return 'client';
+  return 'staff';
+}
+
 function render() {
+  const mode = appMode();
+  document.body.classList.toggle('chrome-off', mode !== 'staff');
   renderHeader();
   renderTabs();
   const el = $('screenContent');
 
+  if (mode === 'signin') { el.innerHTML = signInScreenHtml(); wireSignIn(el); return; }
   if (state.loading) { el.innerHTML = '<div class="spinner"></div>'; return; }
+
+  if (mode === 'client') {
+    el.innerHTML = connectionBannerHtml() + clientScreenHtml();
+    wireBanner(el);
+    wireClient(el);
+    return;
+  }
 
   let html = connectionBannerHtml();
   if (state.screen === 'home') html += homeScreenHtml();
@@ -345,6 +417,129 @@ function connectionBannerHtml() {
 }
 function wireBanner(el) {
   el.querySelectorAll('[data-retry]').forEach(b => b.addEventListener('click', () => refresh(true)));
+}
+
+/* ===================== Sign-in & client view =====================
+   Two screens that stand outside the normal tab structure: the sign-in
+   form, and the read-only summary a client sees instead of the app. Both
+   render straight into #screenContent with the tab bar hidden. */
+
+function signInScreenHtml() {
+  return '<div class="auth-card">' +
+    '<div class="auth-title">' + escapeHtml(CFG.SITE_NAME || 'Yard Stock') + '</div>' +
+    '<div class="auth-sub">Sign in to see your stock.</div>' +
+    (state.authError ? '<div class="auth-error">' + escapeHtml(state.authError) + '</div>' : '') +
+    '<div class="form-card">' +
+      '<label class="form-field"><div class="ff-label">Email</div>' +
+        '<input id="authEmail" type="email" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@company.com"></label>' +
+      '<label class="form-field"><div class="ff-label">Password</div>' +
+        '<input id="authPass" type="password" autocomplete="current-password" placeholder="Your password"></label>' +
+    '</div>' +
+    '<button class="sheet-save auth-go" id="authGo" type="button">Sign in</button>' +
+    '<div class="status-line">Staff: sign in once on this phone and it stays signed in.</div>' +
+  '</div>';
+}
+
+function wireSignIn(el) {
+  const go = el.querySelector('#authGo');
+  const submit = async () => {
+    const email = el.querySelector('#authEmail').value;
+    const pass = el.querySelector('#authPass').value;
+    if (!email || !pass) { state.authError = 'Email and password, please.'; render(); return; }
+    go.disabled = true; go.textContent = 'Signing in…';
+    try {
+      await DB.signIn(email, pass);
+      state.authError = '';
+      await loadProfile();
+      await refresh();
+    } catch (e) {
+      state.authError = /invalid/i.test(e.message || '') ? 'That email and password do not match.' : (e.message || 'Could not sign in');
+      render();
+    }
+  };
+  go.addEventListener('click', submit);
+  el.querySelector('#authPass').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') submit(); });
+}
+
+/** Read the signed-in account's profile, so the app knows whether it is
+    looking at the shop floor or at a customer. */
+async function loadProfile() {
+  if (!DB.signedIn) { state.profile = null; return; }
+  try {
+    state.profile = await DB.myProfile();
+  } catch (e) {
+    state.profile = null;
+  }
+}
+
+/* ---- The client's own screen: what it is, how much, and a picture ---- */
+function clientScreenHtml() {
+  const q = state.q.trim().toLowerCase();
+  const mine = myClientProducts()
+    .filter(p => !q || String(p.name || '').toLowerCase().includes(q));
+
+  let html = searchRowHtml('Search your stock…');
+
+  if (!mine.length) {
+    html += '<div class="group"><div class="empty-note">' +
+      (q ? 'Nothing matches that.' : 'No stock is allocated to you yet.') +
+      '</div></div>';
+    return html;
+  }
+
+  html += '<div class="client-grid">' + mine.map(p => {
+    const low = needsAttention(p);
+    return '<div class="client-card">' +
+      (p.photo_url
+        ? '<img class="client-photo" src="' + escapeHtml(p.photo_url) + '" alt="">'
+        : '<div class="client-photo client-photo-ph">' + I.box + '</div>') +
+      '<div class="client-body">' +
+        '<div class="client-name">' + escapeHtml(p.name) + '</div>' +
+        '<div class="client-qty ' + (low ? 'low' : '') + '">' + fmtQty(p.qty) +
+          '<span class="client-unit">' + escapeHtml(p.unit || 'ea') + '</span></div>' +
+      '</div>' +
+    '</div>';
+  }).join('') + '</div>';
+
+  html += '<div class="status-line">Stock levels as at ' +
+    (DB.lastSync ? escapeHtml(fmtWhen(new Date(DB.lastSync).toISOString())) : 'now') + '.</div>';
+  return html;
+}
+
+function wireClient(el) {
+  wireSearch(el);
+}
+
+function openClientAccountSheet() {
+  const name = (state.profile && state.profile.clients && state.profile.clients.name) || '';
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">' + escapeHtml(name || 'Your account') + '</div>' +
+    '<div class="sheet-sub">' + escapeHtml(DB.session && DB.session.user ? DB.session.user.email : '') + '</div>' +
+    '<div class="field-group" style="margin-bottom:14px;">' +
+      '<div class="field-row"><span class="fname">Items allocated</span><span class="field-val">' + myClientProducts().length + '</span></div>' +
+      '<div class="field-row"><span class="fname">Last updated</span><span class="field-val">' +
+        (DB.lastSync ? escapeHtml(fmtWhen(new Date(DB.lastSync).toISOString())) : '—') + '</span></div>' +
+    '</div>' +
+    '<div class="sheet-actions">' +
+      '<button class="sheet-cancel" data-close type="button">Close</button>' +
+      '<button class="sheet-delete" data-signout type="button" style="flex:1;border-radius:var(--r-md);">Sign out</button>' +
+    '</div>';
+  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+  sheetEl.querySelector('[data-signout]').addEventListener('click', doSignOut);
+  openSheet();
+}
+
+async function doSignOut() {
+  DB.signOut();
+  state.profile = null;
+  state.products = []; state.movements = []; state.people = []; state.reorderCards = [];
+  state.q = '';
+  closeSheet();
+  render();
+  // Without a session the app falls back to the anon key; before the cutover
+  // that still reads, so show what it can rather than an empty screen.
+  if (appMode() !== 'signin') await refresh(true);
 }
 
 /* ===================== HOME screen ===================== */
@@ -676,9 +871,11 @@ function itemsScreenHtml() {
     html += list.map(p => {
       const sku = orDash(p.code);
       const group = orDash(p.group_name);
+      const owner = clientNameOf(p);
       return '<div class="row"><div class="row-body" data-edit="' + p.id + '">' +
         '<div class="row-title">' + escapeHtml(p.name) + (p.dormant ? ' <span class="meta-chip">dormant</span>' : '') + '</div>' +
-        '<div class="row-meta"><span class="row-mono">' + sku + ' · ' + group + '</span></div>' +
+        '<div class="row-meta"><span class="row-mono">' + sku + ' · ' + group + '</span>' +
+          (owner ? '<span class="meta-chip client">' + escapeHtml(owner) + '</span>' : '') + '</div>' +
         '</div>' +
         '<button class="row-trail row-print" data-printcard="' + p.id + '" type="button" title="Print Kanban card">' + I.print + '</button>' +
         '<span class="row-trail edit-pencil">✎</span></div>';
@@ -959,6 +1156,21 @@ function wireActivity(el) {
 }
 
 /* ===================== Settings sheet (team & data) ===================== */
+/** The Clients row in Settings. Supabase only — local mode has no accounts
+    to attach a client to. */
+function clientsSettingsRowHtml() {
+  const allocated = state.products.filter(p => p.client_id).length;
+  return '<div class="field-label">Clients</div>' +
+    '<div class="group" style="margin-bottom:16px;">' +
+      '<div class="row"><span class="thumb-ph">' + I.box + '</span><div class="row-body" data-clients>' +
+        '<div class="row-title">Clients &amp; their logins</div>' +
+        '<div class="row-meta">' + (state.clients.length
+          ? state.clients.length + ' client' + (state.clients.length === 1 ? '' : 's') + ' · ' + allocated + ' items allocated'
+          : 'Stock you hold for customers') + '</div>' +
+      '</div><span class="row-trail">' + I.chev + '</span></div>' +
+    '</div>';
+}
+
 function openSettingsSheet() {
   const mode = DB.mode === 'supabase' ? 'Shared (Supabase)' : 'Local to this device';
   const sync = DB.lastSync ? fmtWhen(new Date(DB.lastSync).toISOString()) : '—';
@@ -983,6 +1195,7 @@ function openSettingsSheet() {
         ).join('')
       : '<div class="empty-note">No names on the list yet. Add everyone who works the store room — no passwords, they just tap their name once.</div>') +
     '</div>' +
+    (DB.mode === 'supabase' ? clientsSettingsRowHtml() : '') +
     '<div class="field-label">Data</div>' +
     '<div class="field-group" style="margin-bottom:4px;">' +
       '<div class="field-row"><span class="fname">Mode</span><span class="field-val">' + mode + '</span></div>' +
@@ -990,10 +1203,18 @@ function openSettingsSheet() {
       '<div class="field-row" data-refresh style="cursor:pointer;"><span class="fname" style="color:var(--sys-blue);">Refresh now</span></div>' +
       '<div class="field-row" data-export style="cursor:pointer;"><span class="fname" style="color:var(--sys-blue);">Export a backup (JSON)</span></div>' +
     '</div>' +
+    (DB.signedIn
+      ? '<div class="field-group" style="margin-bottom:4px;"><div class="field-row" data-signout style="cursor:pointer;">' +
+          '<span class="fname" style="color:var(--sys-red);">Sign out of ' + escapeHtml((DB.session && DB.session.user && DB.session.user.email) || 'this device') + '</span></div></div>'
+      : '') +
     '<div class="status-line">Yard Stock · v1.0<br>Add to Home Screen for a full-screen app.</div>' +
     '<div class="sheet-actions"><button class="sheet-cancel" data-close type="button" style="flex:1;">Close</button></div>';
 
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+  const cl = sheetEl.querySelector('[data-clients]');
+  if (cl) cl.addEventListener('click', openClientsSheet);
+  const so = sheetEl.querySelector('[data-signout]');
+  if (so) so.addEventListener('click', doSignOut);
   const cm = sheetEl.querySelector('[data-changeme]');
   if (cm) cm.addEventListener('click', () => openPersonSheet());
   const ap = sheetEl.querySelector('[data-addperson]');
@@ -1026,6 +1247,188 @@ function exportBackup() {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   toast('Backup downloaded', 'good');
+}
+
+/* ===================== Clients & their logins (staff only) ===================== */
+
+function openClientsSheet() {
+  renderClientsSheet();
+  openSheet();
+}
+
+function renderClientsSheet() {
+  const counts = {};
+  state.products.forEach(p => { if (p.client_id) counts[p.client_id] = (counts[p.client_id] || 0) + 1; });
+
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">Clients</div>' +
+    '<div class="sheet-sub">Customers whose stock you hold. Each gets a sign-in that shows only their own items.</div>' +
+    '<div class="field-label">Clients<button class="link-btn" data-addclient type="button" style="float:right;">Add client</button></div>' +
+    '<div class="group" style="margin-bottom:16px;">' +
+      (state.clients.length
+        ? state.clients.map(c =>
+            '<div class="row"><div class="row-body" data-openclient="' + escapeHtml(c.id) + '">' +
+              '<div class="row-title">' + escapeHtml(c.name) + '</div>' +
+              '<div class="row-meta">' + (counts[c.id] || 0) + ' item' + ((counts[c.id] || 0) === 1 ? '' : 's') + ' allocated</div>' +
+            '</div><span class="row-trail">' + I.chev + '</span></div>').join('')
+        : '<div class="empty-note">No clients yet. Add one, then set an item&rsquo;s owner to them on the item screen.</div>') +
+    '</div>' +
+    '<div class="sheet-actions"><button class="sheet-cancel" data-close type="button" style="flex:1;">Close</button></div>';
+
+  sheetEl.querySelector('[data-close]').addEventListener('click', () => openSettingsSheet());
+  sheetEl.querySelector('[data-addclient]').addEventListener('click', openAddClientSheet);
+  sheetEl.querySelectorAll('[data-openclient]').forEach(b =>
+    b.addEventListener('click', () => openClientDetailSheet(b.getAttribute('data-openclient'))));
+}
+
+function openAddClientSheet() {
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">Add client</div>' +
+    '<div class="sheet-sub">Just the name for now &mdash; logins come next.</div>' +
+    '<div class="form-card">' +
+      '<label class="form-field"><div class="ff-label">Client name</div>' +
+        '<input id="newClientName" type="text" placeholder="e.g. Chapman Brothers"></label>' +
+    '</div>' +
+    '<div class="sheet-actions">' +
+      '<button class="sheet-cancel" data-back type="button">Cancel</button>' +
+      '<button class="sheet-save" data-save type="button">Add</button>' +
+    '</div>';
+  sheetEl.querySelector('[data-back]').addEventListener('click', renderClientsSheet);
+  sheetEl.querySelector('[data-save]').addEventListener('click', async () => {
+    const name = ($('newClientName').value || '').trim();
+    if (!name) { $('newClientName').focus(); return; }
+    const btn = sheetEl.querySelector('[data-save]');
+    btn.disabled = true; btn.textContent = 'Adding…';
+    try {
+      await DB.createClient(name);
+      state.clients = await DB.listClients();
+      toast('Client added · ' + name, 'good');
+      renderClientsSheet();
+    } catch (e) {
+      toast(e.message || 'Could not add that client', 'bad');
+      btn.disabled = false; btn.textContent = 'Add';
+    }
+  });
+  setTimeout(() => { const i = $('newClientName'); if (i) i.focus(); }, 80);
+}
+
+let clientLogins = [];
+async function openClientDetailSheet(clientId) {
+  const c = state.clients.find(x => x.id === clientId);
+  if (!c) { renderClientsSheet(); return; }
+  clientLogins = [];
+  renderClientDetailSheet(c, true);
+  try { clientLogins = await DB.listClientLogins(clientId); } catch (e) { /* shown as none */ }
+  renderClientDetailSheet(c, false);
+}
+
+function renderClientDetailSheet(c, loading) {
+  const items = state.products.filter(p => p.client_id === c.id && !p.archived);
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">' + escapeHtml(c.name) + '</div>' +
+    '<div class="sheet-sub">' + items.length + ' item' + (items.length === 1 ? '' : 's') + ' allocated to them</div>' +
+    '<div class="field-label">Logins<button class="link-btn" data-addlogin type="button" style="float:right;">Create login</button></div>' +
+    '<div class="group" style="margin-bottom:16px;">' +
+      (loading
+        ? '<div class="empty-note">Loading…</div>'
+        : clientLogins.length
+          ? clientLogins.map(l =>
+              '<div class="row"><div class="row-body"><div class="row-title">' + escapeHtml(l.label || 'Login') + '</div>' +
+              '<div class="row-meta">Added ' + escapeHtml(fmtWhen(l.created_at)) + '</div></div>' +
+              '<button class="row-trail" data-dellogin="' + escapeHtml(l.id) + '" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button></div>').join('')
+          : '<div class="empty-note">No login yet. Create one and send them the email and password.</div>') +
+    '</div>' +
+    '<div class="field-label">Their items</div>' +
+    '<div class="group" style="margin-bottom:16px;">' +
+      (items.length
+        ? items.slice(0, 12).map(p =>
+            '<div class="row"><div class="row-body"><div class="row-title">' + escapeHtml(p.name) + '</div>' +
+            '<div class="row-meta">' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + '</div></div></div>').join('') +
+          (items.length > 12 ? '<div class="empty-note">…and ' + (items.length - 12) + ' more.</div>' : '')
+        : '<div class="empty-note">Nothing allocated yet. Open an item and set its owner to ' + escapeHtml(c.name) + '.</div>') +
+    '</div>' +
+    '<div class="sheet-actions">' +
+      '<button class="sheet-cancel" data-back type="button">Back</button>' +
+      '<button class="sheet-delete" data-delclient type="button">' + I.trash + '</button>' +
+    '</div>';
+
+  sheetEl.querySelector('[data-back]').addEventListener('click', renderClientsSheet);
+  sheetEl.querySelector('[data-addlogin]').addEventListener('click', () => openAddLoginSheet(c));
+  sheetEl.querySelectorAll('[data-dellogin]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Remove this login? They will not be able to sign in again.')) return;
+    try {
+      await DB.removeClientLogin(b.getAttribute('data-dellogin'));
+      clientLogins = await DB.listClientLogins(c.id);
+      renderClientDetailSheet(c, false);
+      toast('Login removed', 'good');
+    } catch (e) { toast(e.message || 'Could not remove that login', 'bad'); }
+  }));
+  sheetEl.querySelector('[data-delclient]').addEventListener('click', async () => {
+    if (!confirm('Delete ' + c.name + '? Their items stay, but become our own stock again and their logins stop working.')) return;
+    try {
+      await DB.removeClient(c.id);
+      state.clients = await DB.listClients();
+      await refresh();
+      renderClientsSheet();
+      toast('Client deleted', 'good');
+    } catch (e) { toast(e.message || 'Could not delete that client', 'bad'); }
+  });
+}
+
+function openAddLoginSheet(c) {
+  // Suggested, not imposed: a password that can be read down a phone line, but
+  // long enough not to be guessed. The client cannot change it themselves, so
+  // it wants to be something you are happy to have written down.
+  const suggestion = suggestPassword();
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">Login for ' + escapeHtml(c.name) + '</div>' +
+    '<div class="sheet-sub">Send them these two. They will see only ' + escapeHtml(c.name) + '&rsquo;s stock.</div>' +
+    '<div class="form-card">' +
+      '<label class="form-field"><div class="ff-label">Their email</div>' +
+        '<input id="loginEmail" type="email" inputmode="email" autocapitalize="off" spellcheck="false" placeholder="buyer@theirfirm.com"></label>' +
+      '<label class="form-field"><div class="ff-label">Password</div>' +
+        '<input id="loginPass" type="text" value="' + escapeHtml(suggestion) + '"></label>' +
+      '<label class="form-field"><div class="ff-label">Label (optional)</div>' +
+        '<input id="loginLabel" type="text" placeholder="e.g. Sipho, purchasing"></label>' +
+    '</div>' +
+    '<div class="form-hint">Copy the password before you tap Create &mdash; it is not shown again, and only you can reset it, from the Supabase dashboard.</div>' +
+    '<div class="sheet-actions">' +
+      '<button class="sheet-cancel" data-back type="button">Cancel</button>' +
+      '<button class="sheet-save" data-save type="button">Create login</button>' +
+    '</div>';
+
+  sheetEl.querySelector('[data-back]').addEventListener('click', () => openClientDetailSheet(c.id));
+  sheetEl.querySelector('[data-save]').addEventListener('click', async () => {
+    const email = ($('loginEmail').value || '').trim();
+    const pass = $('loginPass').value || '';
+    const label = ($('loginLabel').value || '').trim();
+    if (!email) { $('loginEmail').focus(); toast('Their email, please'); return; }
+    if (pass.length < 8) { $('loginPass').focus(); toast('At least 8 characters'); return; }
+    const btn = sheetEl.querySelector('[data-save]');
+    btn.disabled = true; btn.textContent = 'Creating…';
+    try {
+      await DB.createClientLogin(c.id, email, pass, label || email);
+      clientLogins = await DB.listClientLogins(c.id);
+      renderClientDetailSheet(c, false);
+      toast('Login created for ' + email, 'good');
+    } catch (e) {
+      toast(e.message || 'Could not create that login', 'bad');
+      btn.disabled = false; btn.textContent = 'Create login';
+    }
+  });
+  setTimeout(() => { const i = $('loginEmail'); if (i) i.focus(); }, 80);
+}
+
+function suggestPassword() {
+  // No l/1/O/0 in the alphabet: this gets read out over a phone line.
+  const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const out = new Uint32Array(12);
+  crypto.getRandomValues(out);
+  return Array.from(out, n => chars[n % chars.length]).join('');
 }
 
 /* ===================== Sheet plumbing ===================== */
@@ -1122,6 +1525,7 @@ function renderProductDetail(p) {
       '<button class="detail-btn out" data-out type="button">' + I.arrowOut + ' Book out</button>' +
     '</div>' +
     '<div class="field-group" style="margin-bottom:12px;">' +
+      '<div class="field-row"><span class="fname">Owner</span><span class="field-val">' + (clientNameOf(p) ? escapeHtml(clientNameOf(p)) + ' (client stock)' : 'Ours') + '</span></div>' +
       '<div class="field-row"><span class="fname">Rack location</span><span class="field-val" style="color:var(--sys-teal);font-weight:700;font-variant-numeric:tabular-nums;">' + orDash(p.location) + '</span></div>' +
       '<div class="field-row"><span class="fname">SKU</span><span class="field-val" style="font-family:ui-monospace,Menlo,monospace;">' + orDash(p.code) + '</span></div>' +
       '<div class="field-row"><span class="fname">Group / type</span><span class="field-val">' + orDash(p.group_name) + ' · ' + orDash(p.category) + '</span></div>' +
@@ -1611,6 +2015,7 @@ function openItemForm(existing) {
     unit, qty: p.id ? num(p.qty) : 0, min_qty: num(p.min_qty) || '', cost: parseMoney(p.cost),
     rack: loc.rack, bay: loc.bay, level: loc.level, pos: loc.pos, bulk_location: p.bulk_location || '',
     place_of_use: p.place_of_use || '',
+    client_id: p.client_id || '',
     pref_supplier: p.pref_supplier || '',
     pref_moq_qty: prefMoq.qty, pref_moq_unit: prefMoq.unit,
     pref_lead_qty: prefLead.qty, pref_lead_unit: prefLead.unit,
@@ -1678,6 +2083,14 @@ function qtyUnitPairHtml(qtyId, qtyLabel, unitId, unitLabel, qtyVal, unitVal, op
   '</div>';
 }
 
+/** What the owner pills mean, spelled out — it is the one field on this form
+    that changes who else can see the item. */
+function clientHintText(d) {
+  if (!d.client_id) return 'Our own stock. Clients cannot see it.';
+  const c = state.clients.find(x => x.id === d.client_id);
+  return 'Shows on ' + (c ? c.name : 'that client') + "'s own sign-in: name, photo and quantity only — never cost, supplier or rack.";
+}
+
 function renderItemForm() {
   const d = itemDraft;
   const editing = !!d.id;
@@ -1704,6 +2117,14 @@ function renderItemForm() {
       formFieldHtml('fCode', 'SKU', d.code, { placeholder: 'e.g. LG-430', mono: true }) +
       formFieldHtml('fNotes', 'Description', d.notes, { textarea: true, placeholder: 'Short description' }) +
     '</div>' +
+
+    '<div class="form-section-label">Whose stock is this?</div>' +
+    '<div class="pill-grid" style="margin-bottom:4px;">' +
+      '<button class="pill-btn ' + (!d.client_id ? 'active' : '') + '" data-setclient="" type="button">Ours</button>' +
+      state.clients.map(c =>
+        '<button class="pill-btn ' + (d.client_id === c.id ? 'active' : '') + '" data-setclient="' + escapeHtml(c.id) + '" type="button">' + escapeHtml(c.name) + '</button>').join('') +
+    '</div>' +
+    '<div class="form-hint" id="clientHint">' + clientHintText(d) + '</div>' +
 
     '<div class="form-section-label">Group &amp; category</div>' +
     '<div class="form-card">' + formFieldHtml('fGroup', 'Group', d.group_name, { placeholder: 'e.g. Timber' }) + '</div>' +
@@ -1796,6 +2217,15 @@ function renderItemForm() {
   sheetEl.querySelectorAll('[data-pcat]').forEach(b => b.addEventListener('click', () => {
     d.category = b.getAttribute('data-pcat');
     sheetEl.querySelectorAll('[data-pcat]').forEach(x => x.classList.toggle('active', x.getAttribute('data-pcat') === d.category));
+  }));
+  // Toggling classes rather than re-rendering: this sits halfway down a long
+  // form, and a re-render would throw the user back to the top of it.
+  sheetEl.querySelectorAll('[data-setclient]').forEach(b => b.addEventListener('click', () => {
+    d.client_id = b.getAttribute('data-setclient') || '';
+    sheetEl.querySelectorAll('[data-setclient]').forEach(x =>
+      x.classList.toggle('active', (x.getAttribute('data-setclient') || '') === d.client_id));
+    const hint = $('clientHint');
+    if (hint) hint.textContent = clientHintText(d);
   }));
   sheetEl.querySelectorAll('[data-setgroup]').forEach(b => b.addEventListener('click', () => { d.group_name = b.getAttribute('data-setgroup'); $('fGroup').value = d.group_name; }));
   sheetEl.querySelectorAll('[data-dormant]').forEach(b => b.addEventListener('click', () => {
@@ -2063,6 +2493,7 @@ async function saveItem() {
       min_qty: num(d.min_qty), cost: formatMoney(d.cost),
       bulk_location: (d.bulk_location || '').trim() || null,
       place_of_use: (d.place_of_use || '').trim() || null,
+      client_id: d.client_id || null,
       pref_supplier: (d.pref_supplier || '').trim() || null,
       pref_moq: formatAmountUnit(d.pref_moq_qty, d.pref_moq_unit),
       pref_lead_time: formatAmountUnit(d.pref_lead_qty, d.pref_lead_unit),
@@ -2235,7 +2666,9 @@ function renderPickProduct(dir) {
 /* ===================== Init ===================== */
 $('fabAdd').innerHTML = I.plus;
 $('fabAdd').addEventListener('click', () => { if (!state.loading) openFabSheet(); });
-$('navMe').addEventListener('click', () => openPersonSheet());
+$('navMe').addEventListener('click', () => {
+  if (isClientView()) openClientAccountSheet(); else openPersonSheet();
+});
 $('navScan').innerHTML = I.scan;
 $('navScan').addEventListener('click', openScanSheet);
 $('navGear').innerHTML = I.gear;
@@ -2248,6 +2681,10 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && !s
 (async function boot() {
   render();
   await DB.init();
+  // Who is signed in decides which of the three shapes the app takes, so this
+  // has to settle before anything is fetched.
+  await loadProfile();
+  if (appMode() === 'signin') { state.loading = false; render(); return bootServiceWorker(); }
   await refresh();
 
   // A scanned Kanban card lands here as ?item=<id> — jump straight to it,
@@ -2255,16 +2692,27 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && !s
   const deepLinkId = new URLSearchParams(location.search).get('item');
   if (deepLinkId) history.replaceState(null, '', location.pathname);
 
+  if (isClientView()) {
+    // Nothing to ask a client: no name to pick, and cards deep-link to a
+    // detail sheet full of costs and suppliers they should not see.
+    bootServiceWorker();
+    return;
+  }
+
   if (!state.me) {
     openPersonSheet(deepLinkId ? () => openDeepLinkedItem(deepLinkId) : undefined);
   } else if (deepLinkId) {
     openDeepLinkedItem(deepLinkId);
   }
 
+  bootServiceWorker();
+})();
+
+function bootServiceWorker() {
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
-})();
+}
 function openDeepLinkedItem(id) {
   if (productById(id)) openProductDetail(id);
   else toast('That item was not found');

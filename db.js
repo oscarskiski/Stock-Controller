@@ -238,6 +238,67 @@
     }
   };
 
+  /* ---------------------------------------------------------
+     Session. Until the access cutover runs, everything works on the
+     public anon key exactly as it always has and a session is simply
+     absent; afterwards every request needs one. Stored in localStorage
+     so a phone signs in once and stays signed in, refreshing the token
+     as it expires.
+     --------------------------------------------------------- */
+  const SESSION_KEY = 'ys_session';
+  const Session = {
+    data: (() => {
+      try { return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }
+      catch (e) { return null; }
+    })(),
+    save(d) {
+      this.data = d;
+      if (d) localStorage.setItem(SESSION_KEY, JSON.stringify(d));
+      else localStorage.removeItem(SESSION_KEY);
+    },
+    get token() { return this.data && this.data.access_token; },
+    get userId() { return this.data && this.data.user && this.data.user.id; },
+    get email() { return this.data && this.data.user && this.data.user.email; }
+  };
+
+  async function authFetch(path, body, extraHeaders) {
+    const base = String(CFG.SUPABASE_URL || '').replace(/\/+$/, '');
+    let res;
+    try {
+      res = await fetch(base + '/auth/v1/' + path, {
+        method: 'POST',
+        headers: Object.assign({
+          'apikey': CFG.SUPABASE_ANON_KEY || '',
+          'Content-Type': 'application/json'
+        }, extraHeaders || {}),
+        body: JSON.stringify(body)
+      });
+    } catch (e) {
+      throw new OfflineError('Could not reach the server');
+    }
+    const text = await res.text();
+    const json = text ? JSON.parse(text) : null;
+    if (!res.ok) {
+      const msg = (json && (json.error_description || json.msg || json.message || json.error)) || '';
+      throw new Error(msg || ('Sign-in failed (' + res.status + ')'));
+    }
+    return json;
+  }
+
+  async function refreshSession() {
+    if (!Session.data || !Session.data.refresh_token) return false;
+    try {
+      const out = await authFetch('token?grant_type=refresh_token', { refresh_token: Session.data.refresh_token });
+      Session.save(out);
+      return true;
+    } catch (e) {
+      // A refresh token the server no longer honours means the session is
+      // finished; drop it so the app asks for a sign-in rather than looping.
+      if (!(e instanceof OfflineError)) Session.save(null);
+      return false;
+    }
+  }
+
   /* =========================================================
      SUPABASE ADAPTER (PostgREST + Storage over fetch)
      ========================================================= */
@@ -246,10 +307,12 @@
     base: String(CFG.SUPABASE_URL || '').replace(/\/+$/, ''),
     key: CFG.SUPABASE_ANON_KEY || '',
 
+    /** The session's token when signed in, the public anon key otherwise.
+        Before the access cutover both work; after it, only the former does. */
     headers(extra) {
       return Object.assign({
         'apikey': this.key,
-        'Authorization': 'Bearer ' + this.key,
+        'Authorization': 'Bearer ' + (Session.token || this.key),
         'Content-Type': 'application/json'
       }, extra || {});
     },
@@ -264,6 +327,13 @@
         });
       } catch (e) {
         throw new OfflineError('Could not reach the server');
+      }
+      // An expired access token reads as 401. Refresh once and retry, so a
+      // phone left alone overnight does not greet its owner with an error.
+      // Deliberately outside the try above: a failure from the retry must not
+      // be relabelled as "offline".
+      if (res.status === 401 && Session.data && !opts.__retried && await refreshSession()) {
+        return await this.rest(path, Object.assign({}, opts, { __retried: true }));
       }
       if (!res.ok) {
         let detail = '';
@@ -406,6 +476,79 @@
     uuid,
     /** false when this browser refused to give us persistent storage */
     persistent: true,
+
+    /* ---- Accounts ------------------------------------------------------
+       Only meaningful against Supabase; in local mode there is nobody to
+       sign in to, so these report "signed out" and refuse politely. */
+    get session() { return Session.data; },
+    get signedIn() { return !!Session.token; },
+
+    async signIn(email, password) {
+      if (impl.mode !== 'supabase') throw new Error('Accounts need Supabase configured');
+      const out = await authFetch('token?grant_type=password', {
+        email: String(email || '').trim(), password: String(password || '')
+      });
+      Session.save(out);
+      return out;
+    },
+
+    signOut() {
+      Session.save(null);
+      this.lastSync = null;
+    },
+
+    /** The signed-in user's profile row, or null when signed out. Says
+        whether they are staff or a client, and which client they are. */
+    async myProfile() {
+      if (!Session.token) return null;
+      const rows = await impl.rest('profiles?select=*,clients(name)&id=eq.' + Session.userId + '&limit=1');
+      return (rows && rows[0]) || null;
+    },
+
+    async listClients() {
+      if (impl.mode !== 'supabase') return [];
+      return await impl.rest('clients?select=*&order=name.asc');
+    },
+    async createClient(name) {
+      const rows = await impl.rest('clients', {
+        method: 'POST', body: { name: name }, headers: { 'Prefer': 'return=representation' }
+      });
+      return rows[0];
+    },
+    async removeClient(id) {
+      await impl.rest('clients?id=eq.' + id, { method: 'DELETE' });
+    },
+
+    /** Client logins attached to a client, newest first. */
+    async listClientLogins(clientId) {
+      if (impl.mode !== 'supabase') return [];
+      return await impl.rest('profiles?select=*&role=eq.client&client_id=eq.' + clientId + '&order=created_at.desc');
+    },
+
+    /** Create a client login. Uses the ordinary sign-up endpoint rather than
+        the admin API, because the admin API needs the service key and that
+        must never be shipped in a page. A self-signed-up account with no
+        profiles row can read nothing, so leaving sign-up open is safe. */
+    async createClientLogin(clientId, email, password, label) {
+      if (impl.mode !== 'supabase') throw new Error('Accounts need Supabase configured');
+      const out = await authFetch('signup', {
+        email: String(email || '').trim(), password: String(password || '')
+      });
+      const userId = (out && out.user && out.user.id) || (out && out.id);
+      if (!userId) throw new Error('Supabase did not return the new account — is "Confirm email" still on?');
+      await impl.rest('profiles', {
+        method: 'POST',
+        body: { id: userId, role: 'client', client_id: clientId, label: label || email },
+        headers: { 'Prefer': 'resolution=merge-duplicates' }
+      });
+      return userId;
+    },
+
+    async removeClientLogin(userId) {
+      // Removing the profile is what removes access; the auth user itself can
+      // only be deleted with the service key, from the Supabase dashboard.
+      await impl.rest('profiles?id=eq.' + userId, { method: 'DELETE' });
+    },
 
     async init() {
       this.persistent = await storageOk();

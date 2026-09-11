@@ -23,6 +23,13 @@ window.CONFIG = {
   // Company name shown under the title
   SITE_NAME: 'Off-site store',
 
+  // Set to true ONLY after running schema-clients-cutover.sql and confirming
+  // a staff account can sign in. It makes the app demand a session, which is
+  // what the database will start demanding at the same moment. Flipping it
+  // early locks your own team out; flipping it late leaves client stock
+  // readable by anyone holding the anon key above.
+  REQUIRE_LOGIN: false,
+
   // Shown next to Cost / Price fields in the item form, e.g. 'R', '£', '$'.
   // Leave blank to show plain numbers with no currency symbol.
   CURRENCY_SYMBOL: 'R'
