@@ -547,11 +547,20 @@
       return await impl.rest('profiles?select=*&role=eq.client&client_id=eq.' + clientId + '&order=created_at.desc');
     },
 
+    /** Everyone at Elmos. These see the whole app. */
+    async listStaffLogins() {
+      if (impl.mode !== 'supabase') return [];
+      return await impl.rest('profiles?select=*&role=eq.staff&order=created_at.desc');
+    },
+
     /** Create a client login. Uses the ordinary sign-up endpoint rather than
         the admin API, because the admin API needs the service key and that
         must never be shipped in a page. A self-signed-up account with no
         profiles row can read nothing, so leaving sign-up open is safe. */
-    async createClientLogin(clientId, username, password, label) {
+    async createLogin(opts) {
+      const role = opts.role === 'staff' ? 'staff' : 'client';
+      const clientId = role === 'client' ? opts.clientId : null;
+      const username = opts.username, password = opts.password, label = opts.label;
       if (impl.mode !== 'supabase') throw new Error('Accounts need Supabase configured');
       const clean = cleanUsername(username);
       if (!clean) throw new Error('That username has no letters or digits in it');
@@ -568,13 +577,13 @@
       }
       await impl.rest('profiles', {
         method: 'POST',
-        body: { id: userId, role: 'client', client_id: clientId, username: clean, label: label || clean },
+        body: { id: userId, role: role, client_id: clientId, username: clean, label: label || clean },
         headers: { 'Prefer': 'resolution=merge-duplicates' }
       });
       return userId;
     },
 
-    async removeClientLogin(userId) {
+    async removeLogin(userId) {
       // Removing the profile is what removes access; the auth user itself can
       // only be deleted with the service key, from the Supabase dashboard.
       await impl.rest('profiles?id=eq.' + userId, { method: 'DELETE' });

@@ -487,6 +487,11 @@ function wireSignIn(el) {
       state.forceSignIn = false;
       state.signInFrom = '';
       await loadProfile();
+      // A staff login already says who it is; no need to make them pick a
+      // name off the team list as well.
+      if (state.profile && state.profile.role === 'staff' && state.profile.label && !state.me) {
+        setMe(state.profile.label);
+      }
       await refresh();
     } catch (e) {
       // GoTrue says "invalid login credentials" for a wrong username and a
@@ -584,12 +589,16 @@ async function doSignOut() {
   DB.signOut();
   state.profile = null;
   state.products = []; state.movements = []; state.people = []; state.reorderCards = [];
+  state.clients = [];
   state.q = '';
+  // Signing out returns to the sign-in screen, never to the app. Until the
+  // cutover the anon key still reads everything, so dropping a signed-out
+  // client back into the app would show them every client's stock.
+  state.forceSignIn = true;
+  state.signInFrom = 'link';
+  state.authError = '';
   closeSheet();
   render();
-  // Without a session the app falls back to the anon key; before the cutover
-  // that still reads, so show what it can rather than an empty screen.
-  if (appMode() !== 'signin') await refresh(true);
 }
 
 /* ===================== HOME screen ===================== */
@@ -1210,17 +1219,17 @@ function wireActivity(el) {
     to attach a client to. */
 function clientsSettingsRowHtml() {
   const allocated = state.products.filter(p => p.client_id).length;
-  return '<div class="field-label">Clients</div>' +
+  return '<div class="field-label">Access</div>' +
     '<div class="group" style="margin-bottom:16px;">' +
-      '<div class="row"><span class="thumb-ph">' + I.box + '</span><div class="row-body" data-clients>' +
-        '<div class="row-title">Clients &amp; their logins</div>' +
+      '<div class="row"><span class="thumb-ph">' + I.person + '</span><div class="row-body" data-clients>' +
+        '<div class="row-title">Accounts</div>' +
         '<div class="row-meta">' + (state.clients.length
-          ? state.clients.length + ' client' + (state.clients.length === 1 ? '' : 's') + ' · ' + allocated + ' items allocated'
-          : 'Stock you hold for customers') + '</div>' +
+          ? 'Team logins · ' + state.clients.length + ' client' + (state.clients.length === 1 ? '' : 's') + ' · ' + allocated + ' items allocated'
+          : 'Team logins, and clients you hold stock for') + '</div>' +
       '</div><span class="row-trail">' + I.chev + '</span></div>' +
       '<div class="row"><span class="thumb-ph">' + I.person + '</span><div class="row-body" data-testlogin>' +
-        '<div class="row-title">Open the sign-in screen</div>' +
-        '<div class="row-meta">To try a client login, or to sign in as staff</div>' +
+        '<div class="row-title">Sign in / switch account</div>' +
+        '<div class="row-meta">Try a login, or sign this device in</div>' +
       '</div><span class="row-trail">' + I.chev + '</span></div>' +
     '</div>';
 }
@@ -1268,7 +1277,7 @@ function openSettingsSheet() {
 
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
   const cl = sheetEl.querySelector('[data-clients]');
-  if (cl) cl.addEventListener('click', openClientsSheet);
+  if (cl) cl.addEventListener('click', openAccountsSheet);
   const tl = sheetEl.querySelector('[data-testlogin]');
   if (tl) tl.addEventListener('click', () => {
     state.forceSignIn = true;
@@ -1312,22 +1321,43 @@ function exportBackup() {
   toast('Backup downloaded', 'good');
 }
 
-/* ===================== Clients & their logins (staff only) ===================== */
+/* ===================== Accounts: the team, and the clients =====================
+   Everyone who uses the app has a username and a password. An Elmos login
+   sees the whole app; a client login sees only the items allocated to their
+   company. Both are created here, so nobody needs the Supabase dashboard. */
 
-function openClientsSheet() {
-  renderClientsSheet();
+let staffLogins = [];
+let clientLogins = [];
+
+async function openAccountsSheet() {
+  renderAccountsSheet(true);
   openSheet();
+  try { staffLogins = await DB.listStaffLogins(); } catch (e) { staffLogins = []; }
+  renderAccountsSheet(false);
 }
 
-function renderClientsSheet() {
+function renderAccountsSheet(loading) {
   const counts = {};
   state.products.forEach(p => { if (p.client_id) counts[p.client_id] = (counts[p.client_id] || 0) + 1; });
+  const site = CFG.SITE_NAME || 'Our team';
 
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
-    '<div class="sheet-title">Clients</div>' +
-    '<div class="sheet-sub">Customers whose stock you hold. Each gets a sign-in that shows only their own items.</div>' +
-    '<div class="field-label">Clients<button class="link-btn" data-addclient type="button" style="float:right;">Add client</button></div>' +
+    '<div class="sheet-title">Accounts</div>' +
+    '<div class="sheet-sub">Everyone signs in with a username and password you issue here.</div>' +
+
+    '<div class="field-label">' + escapeHtml(site) + ' — sees everything' +
+      '<button class="link-btn" data-addstaff type="button" style="float:right;">Add</button></div>' +
+    '<div class="group" style="margin-bottom:16px;">' +
+      (loading
+        ? '<div class="empty-note">Loading…</div>'
+        : staffLogins.length
+          ? staffLogins.map(l => loginRowHtml(l)).join('')
+          : '<div class="empty-note">No team logins yet. Add yours first, and test it before anything is locked down.</div>') +
+    '</div>' +
+
+    '<div class="field-label">Clients — see only their own stock' +
+      '<button class="link-btn" data-addclient type="button" style="float:right;">Add client</button></div>' +
     '<div class="group" style="margin-bottom:16px;">' +
       (state.clients.length
         ? state.clients.map(c =>
@@ -1337,28 +1367,54 @@ function renderClientsSheet() {
             '</div><span class="row-trail">' + I.chev + '</span></div>').join('')
         : '<div class="empty-note">No clients yet. Add one, then set an item&rsquo;s owner to them on the item screen.</div>') +
     '</div>' +
+
     '<div class="sheet-actions"><button class="sheet-cancel" data-close type="button" style="flex:1;">Close</button></div>';
 
   sheetEl.querySelector('[data-close]').addEventListener('click', () => openSettingsSheet());
   sheetEl.querySelector('[data-addclient]').addEventListener('click', openAddClientSheet);
+  sheetEl.querySelector('[data-addstaff]').addEventListener('click', () => openAddLoginSheet(null));
   sheetEl.querySelectorAll('[data-openclient]').forEach(b =>
     b.addEventListener('click', () => openClientDetailSheet(b.getAttribute('data-openclient'))));
+  wireLoginRows(sheetEl, () => openAccountsSheet());
+}
+
+function loginRowHtml(l) {
+  const isMe = state.profile && state.profile.id === l.id;
+  return '<div class="row"><div class="row-body">' +
+      '<div class="row-title">' + escapeHtml(l.username || 'login') +
+        (isMe ? ' <span class="meta-chip" style="background:rgba(10,132,255,.2);color:var(--sys-blue)">you</span>' : '') + '</div>' +
+      '<div class="row-meta">' + (l.label && l.label !== l.username ? escapeHtml(l.label) + ' · ' : '') +
+        'added ' + escapeHtml(fmtWhen(l.created_at)) + '</div></div>' +
+    (isMe ? '<span class="row-trail"></span>'
+          : '<button class="row-trail" data-dellogin="' + escapeHtml(l.id) + '" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button>') +
+  '</div>';
+}
+
+function wireLoginRows(root, after) {
+  root.querySelectorAll('[data-dellogin]').forEach(b => b.addEventListener('click', async () => {
+    if (!confirm('Remove this login? They will not be able to sign in again.')) return;
+    try {
+      await DB.removeLogin(b.getAttribute('data-dellogin'));
+      toast('Login removed', 'good');
+      after();
+    } catch (e) { toast(e.message || 'Could not remove that login', 'bad'); }
+  }));
 }
 
 function openAddClientSheet() {
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
     '<div class="sheet-title">Add client</div>' +
-    '<div class="sheet-sub">Just the name for now &mdash; logins come next.</div>' +
+    '<div class="sheet-sub">Just the name for now &mdash; their logins come next.</div>' +
     '<div class="form-card">' +
       '<label class="form-field"><div class="ff-label">Client name</div>' +
-        '<input id="newClientName" type="text" placeholder="e.g. Chapman Brothers"></label>' +
+        '<input id="newClientName" type="text" placeholder="e.g. RBF"></label>' +
     '</div>' +
     '<div class="sheet-actions">' +
       '<button class="sheet-cancel" data-back type="button">Cancel</button>' +
       '<button class="sheet-save" data-save type="button">Add</button>' +
     '</div>';
-  sheetEl.querySelector('[data-back]').addEventListener('click', renderClientsSheet);
+  sheetEl.querySelector('[data-back]').addEventListener('click', () => openAccountsSheet());
   sheetEl.querySelector('[data-save]').addEventListener('click', async () => {
     const name = ($('newClientName').value || '').trim();
     if (!name) { $('newClientName').focus(); return; }
@@ -1368,7 +1424,7 @@ function openAddClientSheet() {
       await DB.createClient(name);
       state.clients = await DB.listClients();
       toast('Client added · ' + name, 'good');
-      renderClientsSheet();
+      openAccountsSheet();
     } catch (e) {
       toast(e.message || 'Could not add that client', 'bad');
       btn.disabled = false; btn.textContent = 'Add';
@@ -1377,10 +1433,9 @@ function openAddClientSheet() {
   setTimeout(() => { const i = $('newClientName'); if (i) i.focus(); }, 80);
 }
 
-let clientLogins = [];
 async function openClientDetailSheet(clientId) {
   const c = state.clients.find(x => x.id === clientId);
-  if (!c) { renderClientsSheet(); return; }
+  if (!c) { openAccountsSheet(); return; }
   clientLogins = [];
   renderClientDetailSheet(c, true);
   try { clientLogins = await DB.listClientLogins(clientId); } catch (e) { /* shown as none */ }
@@ -1393,22 +1448,22 @@ function renderClientDetailSheet(c, loading) {
     '<div class="sheet-handle"></div>' +
     '<div class="sheet-title">' + escapeHtml(c.name) + '</div>' +
     '<div class="sheet-sub">' + items.length + ' item' + (items.length === 1 ? '' : 's') + ' allocated to them</div>' +
+
     '<div class="field-label">Logins<button class="link-btn" data-addlogin type="button" style="float:right;">Create login</button></div>' +
     '<div class="group" style="margin-bottom:16px;">' +
       (loading
         ? '<div class="empty-note">Loading…</div>'
         : clientLogins.length
-          ? clientLogins.map(l =>
-              '<div class="row"><div class="row-body"><div class="row-title">' + escapeHtml(l.username || l.label || 'Login') + '</div>' +
-              '<div class="row-meta">' + (l.label && l.label !== l.username ? escapeHtml(l.label) + ' · ' : '') + 'added ' + escapeHtml(fmtWhen(l.created_at)) + '</div></div>' +
-              '<button class="row-trail" data-dellogin="' + escapeHtml(l.id) + '" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button></div>').join('')
-          : '<div class="empty-note">No login yet. Create one and send them the email and password.</div>') +
+          ? clientLogins.map(l => loginRowHtml(l)).join('')
+          : '<div class="empty-note">No login yet. Create one and send them the link, username and password.</div>') +
     '</div>' +
+
     '<div class="field-label">Their link</div>' +
     '<div class="form-card" style="margin-bottom:16px;">' +
-      '<label class="form-field"><div class="ff-label">Send them this, with their username and password</div>' +
+      '<label class="form-field"><div class="ff-label">Send this with their username and password</div>' +
         '<input id="clientLink" type="text" readonly value="' + escapeHtml(clientSignInUrl()) + '"></label>' +
     '</div>' +
+
     '<div class="field-label">Their items</div>' +
     '<div class="group" style="margin-bottom:16px;">' +
       (items.length
@@ -1418,58 +1473,57 @@ function renderClientDetailSheet(c, loading) {
           (items.length > 12 ? '<div class="empty-note">…and ' + (items.length - 12) + ' more.</div>' : '')
         : '<div class="empty-note">Nothing allocated yet. Open an item and set its owner to ' + escapeHtml(c.name) + '.</div>') +
     '</div>' +
+
     '<div class="sheet-actions">' +
       '<button class="sheet-cancel" data-back type="button">Back</button>' +
       '<button class="sheet-delete" data-delclient type="button">' + I.trash + '</button>' +
     '</div>';
 
-  sheetEl.querySelector('[data-back]').addEventListener('click', renderClientsSheet);
+  sheetEl.querySelector('[data-back]').addEventListener('click', () => openAccountsSheet());
   sheetEl.querySelector('[data-addlogin]').addEventListener('click', () => openAddLoginSheet(c));
-  sheetEl.querySelectorAll('[data-dellogin]').forEach(b => b.addEventListener('click', async () => {
-    if (!confirm('Remove this login? They will not be able to sign in again.')) return;
-    try {
-      await DB.removeClientLogin(b.getAttribute('data-dellogin'));
-      clientLogins = await DB.listClientLogins(c.id);
-      renderClientDetailSheet(c, false);
-      toast('Login removed', 'good');
-    } catch (e) { toast(e.message || 'Could not remove that login', 'bad'); }
-  }));
+  wireLoginRows(sheetEl, () => openClientDetailSheet(c.id));
   sheetEl.querySelector('[data-delclient]').addEventListener('click', async () => {
     if (!confirm('Delete ' + c.name + '? Their items stay, but become our own stock again and their logins stop working.')) return;
     try {
       await DB.removeClient(c.id);
       state.clients = await DB.listClients();
       await refresh();
-      renderClientsSheet();
+      openAccountsSheet();
       toast('Client deleted', 'good');
     } catch (e) { toast(e.message || 'Could not delete that client', 'bad'); }
   });
 }
 
+/** c is a client, or null for a login on the Elmos team. */
 function openAddLoginSheet(c) {
-  // Suggested, not imposed: a password that can be read down a phone line, but
-  // long enough not to be guessed. The client cannot change it themselves, so
-  // it wants to be something you are happy to have written down.
+  const staff = !c;
+  const site = CFG.SITE_NAME || 'our team';
+  // Suggested, not imposed: a password that can be read down a phone line but
+  // is not guessable. Only you can change it, so it wants to be something you
+  // are content to have written down.
   const suggestion = suggestPassword();
+
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
-    '<div class="sheet-title">Login for ' + escapeHtml(c.name) + '</div>' +
-    '<div class="sheet-sub">Send them the link below with these two. No email needed.</div>' +
+    '<div class="sheet-title">' + (staff ? 'New team login' : 'Login for ' + escapeHtml(c.name)) + '</div>' +
+    '<div class="sheet-sub">' + (staff
+      ? 'Sees the whole app — stock, costs, suppliers, the log.'
+      : 'Sees only ' + escapeHtml(c.name) + '&rsquo;s stock: photo, name and quantity.') + '</div>' +
     '<div class="form-card">' +
       '<label class="form-field"><div class="ff-label">Username</div>' +
-        '<input id="loginUser" type="text" autocapitalize="off" spellcheck="false" placeholder="e.g. sipho"></label>' +
+        '<input id="loginUser" type="text" autocapitalize="off" spellcheck="false" placeholder="' + (staff ? 'e.g. oscar' : 'e.g. rottie') + '"></label>' +
       '<label class="form-field"><div class="ff-label">Password</div>' +
         '<input id="loginPass" type="text" value="' + escapeHtml(suggestion) + '"></label>' +
-      '<label class="form-field"><div class="ff-label">Label (optional)</div>' +
-        '<input id="loginLabel" type="text" placeholder="e.g. Sipho, purchasing"></label>' +
+      '<label class="form-field"><div class="ff-label">Their name</div>' +
+        '<input id="loginLabel" type="text" placeholder="' + (staff ? 'e.g. Oscar, store room' : 'e.g. Sipho, purchasing') + '"></label>' +
     '</div>' +
-    '<div class="form-hint">Copy the password before you tap Create &mdash; it is not shown again, and only you can reset it, from the Supabase dashboard. Letters, digits, dots, dashes and underscores only in a username.</div>' +
+    '<div class="form-hint">Copy the password before you tap Create &mdash; it is not shown again. Usernames are unique across everyone: letters, digits, dots, dashes and underscores.</div>' +
     '<div class="sheet-actions">' +
       '<button class="sheet-cancel" data-back type="button">Cancel</button>' +
-      '<button class="sheet-save" data-save type="button">Create login</button>' +
+      '<button class="sheet-save" data-save type="button">Create</button>' +
     '</div>';
 
-  sheetEl.querySelector('[data-back]').addEventListener('click', () => openClientDetailSheet(c.id));
+  sheetEl.querySelector('[data-back]').addEventListener('click', () => staff ? openAccountsSheet() : openClientDetailSheet(c.id));
   sheetEl.querySelector('[data-save]').addEventListener('click', async () => {
     const user = ($('loginUser').value || '').trim();
     const pass = $('loginPass').value || '';
@@ -1479,13 +1533,16 @@ function openAddLoginSheet(c) {
     const btn = sheetEl.querySelector('[data-save]');
     btn.disabled = true; btn.textContent = 'Creating…';
     try {
-      await DB.createClientLogin(c.id, user, pass, label || user);
-      clientLogins = await DB.listClientLogins(c.id);
-      renderClientDetailSheet(c, false);
+      await DB.createLogin({
+        role: staff ? 'staff' : 'client',
+        clientId: staff ? null : c.id,
+        username: user, password: pass, label: label || user
+      });
       toast('Login created · ' + user, 'good');
+      if (staff) openAccountsSheet(); else openClientDetailSheet(c.id);
     } catch (e) {
       toast(e.message || 'Could not create that login', 'bad');
-      btn.disabled = false; btn.textContent = 'Create login';
+      btn.disabled = false; btn.textContent = 'Create';
     }
   });
   setTimeout(() => { const i = $('loginUser'); if (i) i.focus(); }, 80);
@@ -1498,6 +1555,7 @@ function suggestPassword() {
   crypto.getRandomValues(out);
   return Array.from(out, n => chars[n % chars.length]).join('');
 }
+
 
 /* ===================== Sheet plumbing ===================== */
 const scrimEl = $('scrim');
