@@ -30,8 +30,7 @@ window.CONFIG = {
   // exist would orphan every one of them.
   LOGIN_DOMAIN: 'clients.yardstock.app',
 
-  // Set to true ONLY after running schema-clients-cutover.sql
- and confirming
+  // Set to true ONLY after running schema-clients-cutover.sql and confirming
   // a staff account can sign in. It makes the app demand a session, which is
   // what the database will start demanding at the same moment. Flipping it
   // early locks your own team out; flipping it late leaves client stock
