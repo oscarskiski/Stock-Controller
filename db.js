@@ -296,8 +296,14 @@
     return String(name || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
   }
   function accountEmail(who, username) {
+    const raw = String(username || '').trim();
+    // An escape hatch for accounts made by hand in the Supabase dashboard
+    // with a real address: type the whole address as the username and it is
+    // used verbatim, whatever company is picked. Nothing in the app creates
+    // accounts this way, but it means an existing one is not stranded.
+    if (raw.includes('@')) return raw.toLowerCase();
     const domain = CFG.LOGIN_DOMAIN || 'clients.yardstock.app';
-    return cleanUsername(username) + '.' + String(who || 'staff') + '@' + domain;
+    return cleanUsername(raw) + '.' + String(who || 'staff') + '@' + domain;
   }
 
   async function refreshSession() {

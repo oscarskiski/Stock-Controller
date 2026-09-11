@@ -7,7 +7,7 @@
    ASSET_V must match the ?v= stamp on the tags in index.html. Bump both
    on every deploy: without it GitHub Pages' own cache headers keep handing
    the browser yesterday's app.js for up to ten minutes after a push. */
-const ASSET_V = '11';
+const ASSET_V = '12';
 const SHELL = 'yardstock-shell-v' + ASSET_V;
 const FILES = [
   'index.html',
