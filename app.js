@@ -182,8 +182,11 @@ const state = {
   clients: [],
   authError: '',
   /* Set by the ?login link or the Settings row: shows the sign-in screen
-     even before the cutover makes it compulsory. */
-  forceSignIn: false
+     even before the cutover makes it compulsory. signInFrom says which, so
+     only a staff member who opened it from Settings is offered a way back
+     into the app — a client following the link is not. */
+  forceSignIn: false,
+  signInFrom: ''
 };
 
 function isClientView() { return !!(state.profile && state.profile.role === 'client'); }
@@ -460,8 +463,9 @@ function signInScreenHtml() {
 
       '<button class="sheet-save auth-go" id="authGo" type="button">Sign in</button>' +
 
-      (CFG.REQUIRE_LOGIN ? '' :
-        '<button class="link-btn auth-back" id="authBack" type="button">Back to the app</button>') +
+      (state.signInFrom === 'settings' && !CFG.REQUIRE_LOGIN
+        ? '<button class="link-btn auth-back" id="authBack" type="button">Back to the app</button>'
+        : '') +
 
       '<div class="status-line auth-foot">Your username and password come from ' + escapeHtml(site) + '.<br>' +
         'Sign in once and this device stays signed in.</div>' +
@@ -481,6 +485,7 @@ function wireSignIn(el) {
       await DB.signIn(user, pass);
       state.authError = '';
       state.forceSignIn = false;
+      state.signInFrom = '';
       await loadProfile();
       await refresh();
     } catch (e) {
@@ -1267,6 +1272,7 @@ function openSettingsSheet() {
   const tl = sheetEl.querySelector('[data-testlogin]');
   if (tl) tl.addEventListener('click', () => {
     state.forceSignIn = true;
+    state.signInFrom = 'settings';
     closeSheet();
     render();
   });
@@ -2744,7 +2750,10 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && !s
 
 (async function boot() {
   // Read before the first render: ?login decides which screen opens.
-  if (new URLSearchParams(location.search).has('login')) state.forceSignIn = true;
+  if (new URLSearchParams(location.search).has('login')) {
+    state.forceSignIn = true;
+    state.signInFrom = 'link';
+  }
   render();
   await DB.init();
   // Who is signed in decides which of the three shapes the app takes, so this
