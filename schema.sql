@@ -246,3 +246,23 @@ create policy profiles_all on public.profiles for all to anon, authenticated usi
 
 grant all on public.clients, public.profiles to anon, authenticated;
 grant execute on function public.is_staff(), public.my_client_id() to anon, authenticated;
+
+-- ---------------------------------------------------------
+-- Usernames instead of email addresses
+-- ---------------------------------------------------------
+-- Nobody on a shop floor wants to hand out email addresses to sign in
+-- with, and these accounts never receive mail. Supabase Auth insists on
+-- an email, so the app synthesises one from the client and the username
+-- (see accountEmail in db.js) and the person never sees it. The username
+-- is kept here so the Clients screen can list who has a login.
+alter table public.profiles add column if not exists username text;
+create unique index if not exists profiles_username_idx on public.profiles (client_id, lower(username));
+
+-- The sign-in screen has to offer a company picker before anyone is signed
+-- in, so the names must be readable by an unauthenticated visitor. This
+-- view exposes the name and nothing else: no items, counts or contacts.
+-- It runs as its owner, so clients' own RLS does not apply to it.
+create or replace view public.client_directory as
+  select id, name from public.clients order by name;
+
+grant select on public.client_directory to anon, authenticated;

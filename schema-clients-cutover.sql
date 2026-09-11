@@ -21,18 +21,33 @@
 -- ---------------------------------------------------------
 -- Creating the staff login (do this BEFORE the policies below)
 -- ---------------------------------------------------------
--- In the Supabase dashboard: Authentication → Users → Add user.
--- Give it an email your team will remember (e.g. factory@yourfirm.co.za)
--- and a password, and tick "Auto Confirm User".
--- Then copy the new user's UUID and run:
+-- Nobody signs in with an email address. The app asks for a company, a
+-- username and a password, and builds an address out of sight in the form
 --
---   insert into public.profiles (id, role, label)
---   values ('PASTE-THE-UUID-HERE', 'staff', 'Factory floor')
---   on conflict (id) do update set role = 'staff';
+--     <username>.<client-uuid-or-staff>@<LOGIN_DOMAIN>
 --
--- Also turn OFF Authentication → Providers → Email → "Confirm email",
--- so client accounts created from the app's Settings screen are usable
--- straight away instead of waiting on a confirmation mail.
+-- where LOGIN_DOMAIN comes from config.js and defaults to
+-- clients.yardstock.app. No mail is ever sent to it.
+--
+-- So for a staff login with the username "factory", create the user with
+-- exactly this address:
+--
+--     factory.staff@clients.yardstock.app
+--
+-- In the Supabase dashboard: Authentication → Users → Add user. Paste that
+-- address, set a password, and tick "Auto Confirm User". Then copy the new
+-- user's UUID and run:
+--
+--   insert into public.profiles (id, role, username, label)
+--   values ('PASTE-THE-UUID-HERE', 'staff', 'factory', 'Factory floor')
+--   on conflict (id) do update set role = 'staff', username = 'factory';
+--
+-- Your team then signs in by picking "(staff)" from the company list and
+-- entering factory + that password.
+--
+-- Also turn OFF Authentication → Providers → Email → "Confirm email", so
+-- client logins created from the app's Settings screen work immediately
+-- rather than waiting on a confirmation mail that will never arrive.
 
 -- ---------------------------------------------------------
 -- Products: staff see everything, a client sees only their own rows,
@@ -76,6 +91,12 @@ create policy profiles_own on public.profiles for select to authenticated
   using (id = auth.uid());
 create policy profiles_staff on public.profiles for all to authenticated
   using (public.is_staff()) with check (public.is_staff());
+
+-- The sign-in screen's company picker reads this view before anyone has a
+-- session, so it must stay readable by anon. It exposes client names and
+-- nothing else. If you would rather your customer list were not public,
+-- revoke it and have clients type their company name instead.
+grant select on public.client_directory to anon, authenticated;
 
 -- ---------------------------------------------------------
 -- Take the anon key's access away. This is the line that makes the

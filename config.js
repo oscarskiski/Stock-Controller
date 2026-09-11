@@ -23,7 +23,15 @@ window.CONFIG = {
   // Company name shown under the title
   SITE_NAME: 'Off-site store',
 
-  // Set to true ONLY after running schema-clients-cutover.sql and confirming
+  // Sign-ins use a company + username + password, but Supabase Auth insists
+  // on an email address, so the app builds one out of sight from the client
+  // and the username. Nothing is ever sent to it and nobody ever sees it —
+  // this only has to be a domain-shaped string. Changing it after accounts
+  // exist would orphan every one of them.
+  LOGIN_DOMAIN: 'clients.yardstock.app',
+
+  // Set to true ONLY after running schema-clients-cutover.sql
+ and confirming
   // a staff account can sign in. It makes the app demand a session, which is
   // what the database will start demanding at the same moment. Flipping it
   // early locks your own team out; flipping it late leaves client stock

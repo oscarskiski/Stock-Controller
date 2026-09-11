@@ -285,7 +285,23 @@
     return json;
   }
 
+  /* ---------------------------------------------------------
+     Usernames, not email addresses. Supabase Auth requires an email and
+     will not take a bare username, but nothing is ever sent to these
+     addresses, so the app makes one up from the company and the username
+     and never shows it to anyone. Built from the client's uuid rather than
+     its name so that renaming a client does not break their logins.
+     --------------------------------------------------------- */
+  function cleanUsername(name) {
+    return String(name || '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '');
+  }
+  function accountEmail(who, username) {
+    const domain = CFG.LOGIN_DOMAIN || 'clients.yardstock.app';
+    return cleanUsername(username) + '.' + String(who || 'staff') + '@' + domain;
+  }
+
   async function refreshSession() {
+
     if (!Session.data || !Session.data.refresh_token) return false;
     try {
       const out = await authFetch('token?grant_type=refresh_token', { refresh_token: Session.data.refresh_token });
@@ -483,13 +499,21 @@
     get session() { return Session.data; },
     get signedIn() { return !!Session.token; },
 
-    async signIn(email, password) {
+    /** who is a client id, or 'staff' for the factory's own login. */
+    async signIn(who, username, password) {
       if (impl.mode !== 'supabase') throw new Error('Accounts need Supabase configured');
       const out = await authFetch('token?grant_type=password', {
-        email: String(email || '').trim(), password: String(password || '')
+        email: accountEmail(who, username), password: String(password || '')
       });
       Session.save(out);
       return out;
+    },
+
+    /** The companies offered on the sign-in screen. Readable signed-out, by
+        design — the picker has to be filled before anyone has an account. */
+    async listClientDirectory() {
+      if (impl.mode !== 'supabase') return [];
+      return await impl.rest('client_directory?select=id,name');
     },
 
     signOut() {
@@ -529,16 +553,18 @@
         the admin API, because the admin API needs the service key and that
         must never be shipped in a page. A self-signed-up account with no
         profiles row can read nothing, so leaving sign-up open is safe. */
-    async createClientLogin(clientId, email, password, label) {
+    async createClientLogin(clientId, username, password, label) {
       if (impl.mode !== 'supabase') throw new Error('Accounts need Supabase configured');
+      const clean = cleanUsername(username);
+      if (!clean) throw new Error('That username has no letters or digits in it');
       const out = await authFetch('signup', {
-        email: String(email || '').trim(), password: String(password || '')
+        email: accountEmail(clientId, clean), password: String(password || '')
       });
       const userId = (out && out.user && out.user.id) || (out && out.id);
       if (!userId) throw new Error('Supabase did not return the new account — is "Confirm email" still on?');
       await impl.rest('profiles', {
         method: 'POST',
-        body: { id: userId, role: 'client', client_id: clientId, label: label || email },
+        body: { id: userId, role: 'client', client_id: clientId, username: clean, label: label || clean },
         headers: { 'Prefer': 'resolution=merge-duplicates' }
       });
       return userId;

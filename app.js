@@ -424,36 +424,72 @@ function wireBanner(el) {
    form, and the read-only summary a client sees instead of the app. Both
    render straight into #screenContent with the tab bar hidden. */
 
+/* The company picker has to be filled before anyone is signed in, so it comes
+   from the public client_directory view. Loaded once, lazily, on the first
+   render of the sign-in screen. */
+let signInDirectory = null;
+let signInWho = localStorage.getItem('ys_signin_who') || '';
+
+async function loadSignInDirectory() {
+  if (signInDirectory) return;
+  try { signInDirectory = await DB.listClientDirectory(); }
+  catch (e) { signInDirectory = []; }
+  if (appMode() === 'signin') render();
+}
+
 function signInScreenHtml() {
+  if (signInDirectory === null) loadSignInDirectory();
+  const list = signInDirectory || [];
+
   return '<div class="auth-card">' +
     '<div class="auth-title">' + escapeHtml(CFG.SITE_NAME || 'Yard Stock') + '</div>' +
     '<div class="auth-sub">Sign in to see your stock.</div>' +
     (state.authError ? '<div class="auth-error">' + escapeHtml(state.authError) + '</div>' : '') +
     '<div class="form-card">' +
-      '<label class="form-field"><div class="ff-label">Email</div>' +
-        '<input id="authEmail" type="email" inputmode="email" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="you@company.com"></label>' +
+      '<label class="form-field"><div class="ff-label">Who are you with?</div>' +
+        '<select id="authWho">' +
+          '<option value="staff" ' + (signInWho === 'staff' ? 'selected' : '') + '>' +
+            escapeHtml(CFG.SITE_NAME || 'Our team') + ' (staff)</option>' +
+          list.map(c => '<option value="' + escapeHtml(c.id) + '" ' + (signInWho === c.id ? 'selected' : '') + '>' +
+            escapeHtml(c.name) + '</option>').join('') +
+        '</select></label>' +
+      '<label class="form-field"><div class="ff-label">Username</div>' +
+        '<input id="authUser" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" placeholder="The username you were given"></label>' +
       '<label class="form-field"><div class="ff-label">Password</div>' +
         '<input id="authPass" type="password" autocomplete="current-password" placeholder="Your password"></label>' +
     '</div>' +
     '<button class="sheet-save auth-go" id="authGo" type="button">Sign in</button>' +
-    '<div class="status-line">Staff: sign in once on this phone and it stays signed in.</div>' +
+    '<div class="status-line">Staff: sign in once on this phone and it stays signed in.<br>' +
+      'Clients: your username and password come from us.</div>' +
   '</div>';
 }
 
 function wireSignIn(el) {
   const go = el.querySelector('#authGo');
+  const who = el.querySelector('#authWho');
+  who.addEventListener('change', () => {
+    signInWho = who.value;
+    localStorage.setItem('ys_signin_who', signInWho);
+  });
+
   const submit = async () => {
-    const email = el.querySelector('#authEmail').value;
+    const user = el.querySelector('#authUser').value;
     const pass = el.querySelector('#authPass').value;
-    if (!email || !pass) { state.authError = 'Email and password, please.'; render(); return; }
+    if (!user || !pass) { state.authError = 'Username and password, please.'; render(); return; }
     go.disabled = true; go.textContent = 'Signing in…';
     try {
-      await DB.signIn(email, pass);
+      await DB.signIn(who.value, user, pass);
       state.authError = '';
+      signInWho = who.value;
+      localStorage.setItem('ys_signin_who', signInWho);
       await loadProfile();
       await refresh();
     } catch (e) {
-      state.authError = /invalid/i.test(e.message || '') ? 'That email and password do not match.' : (e.message || 'Could not sign in');
+      // GoTrue says "invalid login credentials" whether it was the username,
+      // the password or the wrong company, so the message has to cover all three.
+      state.authError = /invalid/i.test(e.message || '')
+        ? 'That did not work. Check the company, username and password.'
+        : (e.message || 'Could not sign in');
       render();
     }
   };
@@ -515,7 +551,7 @@ function openClientAccountSheet() {
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
     '<div class="sheet-title">' + escapeHtml(name || 'Your account') + '</div>' +
-    '<div class="sheet-sub">' + escapeHtml(DB.session && DB.session.user ? DB.session.user.email : '') + '</div>' +
+    '<div class="sheet-sub">Signed in as ' + escapeHtml((state.profile && state.profile.username) || 'you') + '</div>' +
     '<div class="field-group" style="margin-bottom:14px;">' +
       '<div class="field-row"><span class="fname">Items allocated</span><span class="field-val">' + myClientProducts().length + '</span></div>' +
       '<div class="field-row"><span class="fname">Last updated</span><span class="field-val">' +
@@ -1205,7 +1241,7 @@ function openSettingsSheet() {
     '</div>' +
     (DB.signedIn
       ? '<div class="field-group" style="margin-bottom:4px;"><div class="field-row" data-signout style="cursor:pointer;">' +
-          '<span class="fname" style="color:var(--sys-red);">Sign out of ' + escapeHtml((DB.session && DB.session.user && DB.session.user.email) || 'this device') + '</span></div></div>'
+          '<span class="fname" style="color:var(--sys-red);">Sign out' + ((state.profile && state.profile.username) ? ' (' + escapeHtml(state.profile.username) + ')' : '') + '</span></div></div>'
       : '') +
     '<div class="status-line">Yard Stock · v1.0<br>Add to Home Screen for a full-screen app.</div>' +
     '<div class="sheet-actions"><button class="sheet-cancel" data-close type="button" style="flex:1;">Close</button></div>';
@@ -1304,6 +1340,7 @@ function openAddClientSheet() {
     try {
       await DB.createClient(name);
       state.clients = await DB.listClients();
+      signInDirectory = null;   // the sign-in picker must learn about them
       toast('Client added · ' + name, 'good');
       renderClientsSheet();
     } catch (e) {
@@ -1336,8 +1373,8 @@ function renderClientDetailSheet(c, loading) {
         ? '<div class="empty-note">Loading…</div>'
         : clientLogins.length
           ? clientLogins.map(l =>
-              '<div class="row"><div class="row-body"><div class="row-title">' + escapeHtml(l.label || 'Login') + '</div>' +
-              '<div class="row-meta">Added ' + escapeHtml(fmtWhen(l.created_at)) + '</div></div>' +
+              '<div class="row"><div class="row-body"><div class="row-title">' + escapeHtml(l.username || l.label || 'Login') + '</div>' +
+              '<div class="row-meta">' + (l.label && l.label !== l.username ? escapeHtml(l.label) + ' · ' : '') + 'added ' + escapeHtml(fmtWhen(l.created_at)) + '</div></div>' +
               '<button class="row-trail" data-dellogin="' + escapeHtml(l.id) + '" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button></div>').join('')
           : '<div class="empty-note">No login yet. Create one and send them the email and password.</div>') +
     '</div>' +
@@ -1386,16 +1423,16 @@ function openAddLoginSheet(c) {
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
     '<div class="sheet-title">Login for ' + escapeHtml(c.name) + '</div>' +
-    '<div class="sheet-sub">Send them these two. They will see only ' + escapeHtml(c.name) + '&rsquo;s stock.</div>' +
+    '<div class="sheet-sub">They pick <strong>' + escapeHtml(c.name) + '</strong> on the sign-in screen, then use these. No email needed.</div>' +
     '<div class="form-card">' +
-      '<label class="form-field"><div class="ff-label">Their email</div>' +
-        '<input id="loginEmail" type="email" inputmode="email" autocapitalize="off" spellcheck="false" placeholder="buyer@theirfirm.com"></label>' +
+      '<label class="form-field"><div class="ff-label">Username</div>' +
+        '<input id="loginUser" type="text" autocapitalize="off" spellcheck="false" placeholder="e.g. sipho"></label>' +
       '<label class="form-field"><div class="ff-label">Password</div>' +
         '<input id="loginPass" type="text" value="' + escapeHtml(suggestion) + '"></label>' +
       '<label class="form-field"><div class="ff-label">Label (optional)</div>' +
         '<input id="loginLabel" type="text" placeholder="e.g. Sipho, purchasing"></label>' +
     '</div>' +
-    '<div class="form-hint">Copy the password before you tap Create &mdash; it is not shown again, and only you can reset it, from the Supabase dashboard.</div>' +
+    '<div class="form-hint">Copy the password before you tap Create &mdash; it is not shown again, and only you can reset it, from the Supabase dashboard. Letters, digits, dots, dashes and underscores only in a username.</div>' +
     '<div class="sheet-actions">' +
       '<button class="sheet-cancel" data-back type="button">Cancel</button>' +
       '<button class="sheet-save" data-save type="button">Create login</button>' +
@@ -1403,24 +1440,24 @@ function openAddLoginSheet(c) {
 
   sheetEl.querySelector('[data-back]').addEventListener('click', () => openClientDetailSheet(c.id));
   sheetEl.querySelector('[data-save]').addEventListener('click', async () => {
-    const email = ($('loginEmail').value || '').trim();
+    const user = ($('loginUser').value || '').trim();
     const pass = $('loginPass').value || '';
     const label = ($('loginLabel').value || '').trim();
-    if (!email) { $('loginEmail').focus(); toast('Their email, please'); return; }
+    if (!user) { $('loginUser').focus(); toast('Give them a username'); return; }
     if (pass.length < 8) { $('loginPass').focus(); toast('At least 8 characters'); return; }
     const btn = sheetEl.querySelector('[data-save]');
     btn.disabled = true; btn.textContent = 'Creating…';
     try {
-      await DB.createClientLogin(c.id, email, pass, label || email);
+      await DB.createClientLogin(c.id, user, pass, label || user);
       clientLogins = await DB.listClientLogins(c.id);
       renderClientDetailSheet(c, false);
-      toast('Login created for ' + email, 'good');
+      toast('Login created · ' + user, 'good');
     } catch (e) {
       toast(e.message || 'Could not create that login', 'bad');
       btn.disabled = false; btn.textContent = 'Create login';
     }
   });
-  setTimeout(() => { const i = $('loginEmail'); if (i) i.focus(); }, 80);
+  setTimeout(() => { const i = $('loginUser'); if (i) i.focus(); }, 80);
 }
 
 function suggestPassword() {
