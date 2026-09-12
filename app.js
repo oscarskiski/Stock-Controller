@@ -1089,7 +1089,7 @@ function wireReorder(el) {
 }
 
 async function markCardOrdered(id) {
-  if (!state.me) { openPersonSheet(() => markCardOrdered(id)); return; }
+  if (!state.me && !DB.signedIn) { openPersonSheet(() => markCardOrdered(id)); return; }
   const c = state.reorderCards.find(x => x.id === id);
   if (!c) return;
   try {
@@ -1099,7 +1099,7 @@ async function markCardOrdered(id) {
   } catch (e) { toast(e.message || 'Could not update', 'bad'); }
 }
 async function markCardReceived(id) {
-  if (!state.me) { openPersonSheet(() => markCardReceived(id)); return; }
+  if (!state.me && !DB.signedIn) { openPersonSheet(() => markCardReceived(id)); return; }
   const c = state.reorderCards.find(x => x.id === id);
   if (!c) return;
   try {
@@ -1708,9 +1708,15 @@ const sheetEl = $('sheet');
 let sheetAnim = 0;
 let scrimAnim = 0;
 
+/** Where the sheet is on its way in or out: 0 fully open, 105 gone. The
+    stylesheet turns this into a slide or a fade depending on the screen, so
+    nothing here needs to know which. */
 function sheetY() {
-  const m = /translateY\(([-\d.]+)%\)/.exec(sheetEl.style.transform);
-  return m ? parseFloat(m[1]) : 105;
+  const v = parseFloat(sheetEl.style.getPropertyValue('--sheet-t'));
+  return isNaN(v) ? 105 : v;
+}
+function setSheetY(v) {
+  sheetEl.style.setProperty('--sheet-t', String(v));
 }
 function openSheet() {
   scrimEl.style.pointerEvents = 'auto';
@@ -1719,10 +1725,11 @@ function openSheet() {
   // (detail → edit, pick → book) slides nothing: it just stays put.
   const from = sheetY();
   if (from > 1) sheetEl.scrollTop = 0;
+  sheetEl.classList.add('open');
   const ticket = ++sheetAnim;
   const s = new Spring(from, { dampingRatio: 0.86, response: 0.34 });
   s.set(0);
-  runSpring(s, (v) => { if (ticket === sheetAnim) sheetEl.style.transform = 'translateY(' + v + '%)'; });
+  runSpring(s, (v) => { if (ticket === sheetAnim) setSheetY(v); });
 }
 function closeSheet() {
   // Closing is the one exit every sheet shares, so the camera and any
@@ -1732,8 +1739,12 @@ function closeSheet() {
   const ticket = ++sheetAnim;
   const s = new Spring(sheetY(), { dampingRatio: 1, response: 0.26 });
   s.set(105);
-  runSpring(s, (v) => { if (ticket === sheetAnim) sheetEl.style.transform = 'translateY(' + v + '%)'; },
-    () => { if (ticket === sheetAnim) scrimEl.style.pointerEvents = 'none'; });
+  runSpring(s, (v) => { if (ticket === sheetAnim) setSheetY(v); },
+    () => {
+      if (ticket !== sheetAnim) return;
+      scrimEl.style.pointerEvents = 'none';
+      sheetEl.classList.remove('open');
+    });
   animateOpacity(scrimEl, 0, 180);
 }
 function animateOpacity(el, target, ms) {
@@ -1749,6 +1760,89 @@ function animateOpacity(el, target, ms) {
   })(performance.now());
 }
 scrimEl.addEventListener('click', closeSheet);
+
+/* ---- Swipe a sheet down to dismiss it (phones only) ----
+   Only where the sheet is a panel against the bottom edge; on a wide screen
+   it is a centred dialog with nothing to swipe towards. Touch events rather
+   than pointer events because the sheet scrolls: we have to be able to
+   preventDefault the moment a downward drag starts at the top of it, or the
+   browser rubber-bands instead and the drag never reaches us. */
+let sheetDrag = null;
+
+function isBottomSheet() {
+  return window.matchMedia('(max-width: 699px)').matches;
+}
+
+sheetEl.addEventListener('touchstart', (e) => {
+  if (!isBottomSheet() || e.touches.length !== 1) { sheetDrag = null; return; }
+  // Only from the top of the sheet's own scroll, or the drag would fight
+  // with reading a long form.
+  if (sheetEl.scrollTop > 0) { sheetDrag = null; return; }
+  // Let a text field keep its own drag-to-select.
+  if (e.target.closest('input, textarea, select, .crop-stage, .scan-stage')) { sheetDrag = null; return; }
+  sheetDrag = { y0: e.touches[0].clientY, t0: performance.now(), active: false };
+}, { passive: true });
+
+sheetEl.addEventListener('touchmove', (e) => {
+  if (!sheetDrag || e.touches.length !== 1) return;
+  const dy = e.touches[0].clientY - sheetDrag.y0;
+  if (!sheetDrag.active) {
+    // Upward means they want to scroll; hand it back and stay out of the way.
+    if (dy < 8) { if (dy < -4) sheetDrag = null; return; }
+    sheetDrag.active = true;
+    sheetAnim++;            // cancel any spring still running
+  }
+  e.preventDefault();
+  setSheetY(Math.max(0, dy / sheetEl.offsetHeight * 100));
+}, { passive: false });
+
+function endSheetDrag(e) {
+  if (!sheetDrag) return;
+  const active = sheetDrag.active;
+  const touch = e.changedTouches && e.changedTouches[0];
+  const dy = touch ? touch.clientY - sheetDrag.y0 : 0;
+  const dt = performance.now() - sheetDrag.t0;
+  sheetDrag = null;
+  if (!active) return;
+  // Far enough, or a quick flick: let it go. Otherwise spring back.
+  const travelled = dy / sheetEl.offsetHeight * 100;
+  if (travelled > 30 || (dy > 50 && dt < 320)) closeSheet();
+  else openSheet();
+}
+sheetEl.addEventListener('touchend', endSheetDrag);
+sheetEl.addEventListener('touchcancel', endSheetDrag);
+
+/* ---- Your own account, for anyone who works here ----
+   Replaces the old "Who are you?" prompt: the login already says who you are,
+   so this just shows it and offers the way out. */
+function openMyAccountSheet() {
+  const p = state.profile || {};
+  const roleLine = p.role === 'admin'
+    ? 'Owner — you can create and remove logins'
+    : 'Sees all stock, books it in and out';
+
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">' + escapeHtml(state.me || p.username || 'You') + '</div>' +
+    '<div class="sheet-sub">' + escapeHtml(roleLine) + '</div>' +
+    '<div class="field-group" style="margin-bottom:14px;">' +
+      '<div class="field-row"><span class="fname">Username</span><span class="field-val">' + escapeHtml(p.username || '—') + '</span></div>' +
+      '<div class="field-row"><span class="fname">Bookings logged as</span><span class="field-val">' + escapeHtml(state.me || '—') + '</span></div>' +
+    '</div>' +
+    (p.role === 'admin'
+      ? '<button class="link-btn" data-accounts type="button" style="display:block;margin:0 auto 14px;">Manage accounts</button>'
+      : '') +
+    '<div class="sheet-actions">' +
+      '<button class="sheet-cancel" data-close type="button">Close</button>' +
+      '<button class="sheet-delete" data-signout type="button" style="flex:1;border-radius:var(--r-md);">Sign out</button>' +
+    '</div>';
+
+  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+  sheetEl.querySelector('[data-signout]').addEventListener('click', doSignOut);
+  const acc = sheetEl.querySelector('[data-accounts]');
+  if (acc) acc.addEventListener('click', openAccountsSheet);
+  openSheet();
+}
 
 /* ===================== Product detail sheet ===================== */
 let detailMore = false;
@@ -2124,7 +2218,8 @@ const MOVE_TITLES = { in: 'Book in', out: 'Book out', set: 'Stock take' };
 function openMoveSheet(productId, dir) {
   const p = productById(productId);
   if (!p) { toast('Product not found'); return; }
-  if (!state.me) { openPersonSheet(() => openMoveSheet(productId, dir)); return; }
+  // A signed-in device already knows; only a shared one has to ask.
+  if (!state.me && !DB.signedIn) { openPersonSheet(() => openMoveSheet(productId, dir)); return; }
   moveCtx = { id: productId, dir: dir || 'out', amount: 1, target: num(p.qty), note: '' };
   renderMoveSheet();
   openSheet();
@@ -2207,7 +2302,9 @@ function renderMoveSheet() {
     inp.value = inp.value.trim() ? inp.value.trim() + ' · ' + tag : tag;
     moveCtx.note = inp.value;
   }));
-  sheetEl.querySelector('[data-me]').addEventListener('click', () => openPersonSheet(() => renderMoveSheet()));
+  // Signed in, the name is the account's and is not up for grabs.
+  const meBtn = sheetEl.querySelector('[data-me]');
+  if (meBtn) meBtn.addEventListener('click', () => { if (!DB.signedIn) openPersonSheet(() => renderMoveSheet()); });
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
   sheetEl.querySelector('[data-confirm]').addEventListener('click', confirmMove);
 }
@@ -2934,7 +3031,11 @@ function renderPickProduct(dir) {
 $('fabAdd').innerHTML = I.plus;
 $('fabAdd').addEventListener('click', () => { if (!state.loading && !isClientView()) openFabSheet(); });
 $('navMe').addEventListener('click', () => {
-  if (isClientView()) openClientAccountSheet(); else openPersonSheet();
+  // The login already says who you are; only a device with no account on it
+  // still has to ask.
+  if (isClientView()) openClientAccountSheet();
+  else if (DB.signedIn) openMyAccountSheet();
+  else openPersonSheet();
 });
 $('navScan').innerHTML = I.scan;
 $('navScan').addEventListener('click', openScanSheet);
