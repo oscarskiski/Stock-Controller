@@ -603,6 +603,16 @@
       return userId;
     },
 
+    /** Change the name shown on an account. Only the name: the role is not
+        touched here, and the cutover policies let nobody but the owner write
+        to profiles at all — otherwise anyone could quietly promote
+        themselves by editing their own row. */
+    async renameLogin(userId, label) {
+      await impl.rest('profiles?id=eq.' + userId, {
+        method: 'PATCH', body: { label: String(label || '').trim() }
+      });
+    },
+
     async removeLogin(userId) {
       // Removing the profile is what removes access; the auth user itself can
       // only be deleted with the service key, from the Supabase dashboard.

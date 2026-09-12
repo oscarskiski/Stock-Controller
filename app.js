@@ -467,7 +467,7 @@ function setupScreenHtml() {
 
       '<div class="form-card auth-form">' +
         '<label class="form-field"><div class="ff-label">Your name</div>' +
-          '<input id="setupName" type="text" placeholder="e.g. Oscar"></label>' +
+          '<input id="setupName" type="text" placeholder="e.g. Oscar Bekker"></label>' +
         '<label class="form-field"><div class="ff-label">Username</div>' +
           '<input id="setupUser" type="text" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="e.g. oscar"></label>' +
         '<label class="form-field"><div class="ff-label">Password</div>' +
@@ -486,6 +486,7 @@ function wireSetup(el) {
     const name = (el.querySelector('#setupName').value || '').trim();
     const user = (el.querySelector('#setupUser').value || '').trim();
     const pass = el.querySelector('#setupPass').value || '';
+    if (!name) { state.authError = 'Your name, please — it is what shows on the app and in the log.'; render(); return; }
     if (!user) { state.authError = 'Pick a username.'; render(); return; }
     if (pass.length < 8) { state.authError = 'The password needs at least 8 characters.'; render(); return; }
     go.disabled = true; go.textContent = 'Creating…';
@@ -495,7 +496,7 @@ function wireSetup(el) {
       state.needsSetup = false;
       state.authError = '';
       await loadProfile();
-      if (state.profile && state.profile.label && !state.me) setMe(state.profile.label);
+      applyProfileIdentity();
       await refresh();
       toast('Signed in as ' + user, 'good');
     } catch (e) {
@@ -548,11 +549,7 @@ function wireSignIn(el) {
       state.forceSignIn = false;
       state.signInFrom = '';
       await loadProfile();
-      // A staff login already says who it is; no need to make them pick a
-      // name off the team list as well.
-      if (state.profile && state.profile.role === 'staff' && state.profile.label && !state.me) {
-        setMe(state.profile.label);
-      }
+      applyProfileIdentity();
       await refresh();
     } catch (e) {
       // GoTrue says "invalid login credentials" for a wrong username and a
@@ -574,6 +571,15 @@ function wireSignIn(el) {
     state.authError = '';
     if (!state.products.length) refresh(true); else render();
   });
+}
+
+/** Once signed in, the account says who you are: bookings are logged under
+    the name on it, and nobody is asked to tap a name off a list. The account
+    wins over anything this device remembered from before. */
+function applyProfileIdentity() {
+  if (!state.profile || state.profile.role === 'client') return;
+  const name = state.profile.label || state.profile.username || '';
+  if (name && name !== state.me) setMe(name);
 }
 
 /** Read the signed-in account's profile, so the app knows whether it is
@@ -1307,10 +1313,13 @@ function openSettingsSheet() {
     '<div class="sheet-sub">You, your team, and this device</div>' +
     '<div class="field-label">You</div><div class="group" style="margin-bottom:16px;">' +
       '<div class="row"><span class="avatar" style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--sys-blue),var(--sys-teal));color:#fff;font-size:13px;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + escapeHtml(initials(state.me || '?')) + '</span>' +
-      '<div class="row-body" data-changeme><div class="row-title">' + escapeHtml(state.me || 'Not set') + '</div>' +
-      '<div class="row-meta">Your bookings are logged under this name</div></div>' +
-      '<span class="row-trail">' + I.chev + '</span></div>' +
+      '<div class="row-body" ' + (DB.signedIn ? '' : 'data-changeme') + '><div class="row-title">' + escapeHtml(state.me || 'Not set') + '</div>' +
+      '<div class="row-meta">' + (DB.signedIn
+        ? 'Signed in as ' + escapeHtml((state.profile && state.profile.username) || '') + ' · bookings are logged under this name'
+        : 'Your bookings are logged under this name') + '</div></div>' +
+      (DB.signedIn ? '' : '<span class="row-trail">' + I.chev + '</span>') + '</div>' +
     '</div>' +
+    (DB.signedIn ? '' :
     '<div class="field-label">Team<button class="link-btn" data-addperson type="button" style="float:right;">Add person</button></div>' +
     '<div class="group" style="margin-bottom:16px;">' +
     (state.people.length
@@ -1320,7 +1329,7 @@ function openSettingsSheet() {
           '<button class="row-trail" data-delperson="' + p.id + '" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button></div>'
         ).join('')
       : '<div class="empty-note">No names on the list yet. Add everyone who works the store room — no passwords, they just tap their name once.</div>') +
-    '</div>' +
+    '</div>') +
     (DB.mode === 'supabase' && isAdmin() ? clientsSettingsRowHtml() : '') +
     '<div class="field-label">Data</div>' +
     '<div class="field-group" style="margin-bottom:4px;">' +
@@ -1444,17 +1453,24 @@ function renderAccountsSheet(loading) {
 
 function loginRowHtml(l) {
   const isMe = state.profile && state.profile.id === l.id;
-  return '<div class="row"><div class="row-body">' +
-      '<div class="row-title">' + escapeHtml(l.username || 'login') +
+  // The name leads: it is what shows in the header and against every booking
+  // in the log. The username is the thing they type, so it comes second.
+  return '<div class="row"><div class="row-body" data-editlogin="' + escapeHtml(l.id) + '">' +
+      '<div class="row-title">' + escapeHtml(l.label || l.username || 'login') +
         (isMe ? ' <span class="meta-chip" style="background:rgba(10,132,255,.2);color:var(--sys-blue)">you</span>' : '') + '</div>' +
-      '<div class="row-meta">' + (l.label && l.label !== l.username ? escapeHtml(l.label) + ' · ' : '') +
-        (l.role === 'admin' ? 'owner · can create accounts' : l.role === 'staff' ? 'stock only' : 'client') + '</div></div>' +
+      '<div class="row-meta">' + escapeHtml(l.username || '') + ' · ' +
+        (l.role === 'admin' ? 'owner, can create accounts' : l.role === 'staff' ? 'stock only' : 'client') + '</div></div>' +
     (isMe ? '<span class="row-trail"></span>'
           : '<button class="row-trail" data-dellogin="' + escapeHtml(l.id) + '" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button>') +
   '</div>';
 }
 
 function wireLoginRows(root, after) {
+  root.querySelectorAll('[data-editlogin]').forEach(b => b.addEventListener('click', () => {
+    const id = b.getAttribute('data-editlogin');
+    const l = staffLogins.concat(clientLogins).find(x => x.id === id);
+    if (l) openRenameLoginSheet(l, after);
+  }));
   root.querySelectorAll('[data-dellogin]').forEach(b => b.addEventListener('click', async () => {
     if (!confirm('Remove this login? They will not be able to sign in again.')) return;
     try {
@@ -1559,7 +1575,51 @@ function renderClientDetailSheet(c, loading) {
 }
 
 /** c is a client, or null for a login on the Elmos team. */
+/** Rename an account. The username and password stay as they are — those are
+    what the person types, and changing them would strand them. */
+function openRenameLoginSheet(l, after) {
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">' + escapeHtml(l.label || l.username) + '</div>' +
+    '<div class="sheet-sub">Signs in as <strong>' + escapeHtml(l.username || '') + '</strong>' +
+      (l.role === 'admin' ? ' · owner, can create accounts' : l.role === 'staff' ? ' · sees all stock' : ' · client') + '</div>' +
+    '<div class="form-card">' +
+      '<label class="form-field"><div class="ff-label">Name</div>' +
+        '<input id="renameLabel" type="text" value="' + escapeHtml(l.label || '') + '" placeholder="e.g. Oscar Bekker"></label>' +
+    '</div>' +
+    '<div class="form-hint">This is what shows in the app and against every booking in the log.</div>' +
+    '<div class="sheet-actions">' +
+      '<button class="sheet-cancel" data-back type="button">Cancel</button>' +
+      '<button class="sheet-save" data-save type="button">Save</button>' +
+    '</div>';
+
+  sheetEl.querySelector('[data-back]').addEventListener('click', after);
+  sheetEl.querySelector('[data-save]').addEventListener('click', async () => {
+    const name = ($('renameLabel').value || '').trim();
+    if (!name) { $('renameLabel').focus(); toast('Give them a name'); return; }
+    const btn = sheetEl.querySelector('[data-save]');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      await DB.renameLogin(l.id, name);
+      // Renaming yourself has to show up straight away, in the header and on
+      // everything you book from here on.
+      if (state.profile && state.profile.id === l.id) {
+        state.profile.label = name;
+        applyProfileIdentity();
+        renderHeader();
+      }
+      toast('Saved · ' + name, 'good');
+      after();
+    } catch (e) {
+      toast(e.message || 'Could not save that', 'bad');
+      btn.disabled = false; btn.textContent = 'Save';
+    }
+  });
+  setTimeout(() => { const i = $('renameLabel'); if (i) i.focus(); }, 80);
+}
+
 function openAddLoginSheet(c) {
+
   const staff = !c;
   const site = CFG.SITE_NAME || 'our team';
   // Suggested, not imposed: a password that can be read down a phone line but
@@ -2915,7 +2975,10 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && !s
     return;
   }
 
-  if (!state.me) {
+  applyProfileIdentity();
+  // "Who are you?" is for a shared phone with no accounts on it. Signing in
+  // has already answered the question.
+  if (!state.me && !DB.signedIn) {
     openPersonSheet(deepLinkId ? () => openDeepLinkedItem(deepLinkId) : undefined);
   } else if (deepLinkId) {
     openDeepLinkedItem(deepLinkId);
