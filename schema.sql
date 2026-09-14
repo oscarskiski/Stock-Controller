@@ -290,3 +290,44 @@ create or replace function public.is_admin() returns boolean
 $$;
 
 grant execute on function public.is_admin() to anon, authenticated;
+
+-- ---------------------------------------------------------
+-- Picking lists
+-- ---------------------------------------------------------
+-- Somebody writes a list of what is needed, and somebody else walks the
+-- racks and fetches it. The picker may well be working off a sheet of
+-- paper rather than a phone, so the list has to print, and the lines
+-- carry the rack location as it was when the list was made.
+create table if not exists public.pick_lists (
+  id          uuid primary key default gen_random_uuid(),
+  title       text not null,
+  for_whom    text,                                  -- who is fetching it
+  note        text,
+  status      text not null default 'open',          -- 'open' | 'done'
+  created_at  timestamptz not null default now(),
+  created_by  text,
+  done_at     timestamptz,
+  done_by     text
+);
+
+create table if not exists public.pick_list_items (
+  id          uuid primary key default gen_random_uuid(),
+  list_id     uuid not null references public.pick_lists(id) on delete cascade,
+  product_id  uuid not null references public.products(id) on delete cascade,
+  qty         numeric not null default 1,
+  picked      boolean not null default false,
+  created_at  timestamptz not null default now()
+);
+
+create index if not exists pick_lists_status_idx    on public.pick_lists (status, created_at desc);
+create index if not exists pick_list_items_list_idx on public.pick_list_items (list_id);
+
+alter table public.pick_lists      enable row level security;
+alter table public.pick_list_items enable row level security;
+
+drop policy if exists pick_lists_all      on public.pick_lists;
+drop policy if exists pick_list_items_all on public.pick_list_items;
+create policy pick_lists_all      on public.pick_lists      for all to anon, authenticated using (true) with check (true);
+create policy pick_list_items_all on public.pick_list_items for all to anon, authenticated using (true) with check (true);
+
+grant all on public.pick_lists, public.pick_list_items to anon, authenticated;

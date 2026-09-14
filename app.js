@@ -51,6 +51,7 @@ function haptic(ms) { if (navigator.vibrate) { try { navigator.vibrate(ms || 8);
 
 /* ===================== Icons ===================== */
 const I = {
+  pick: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h6a1 1 0 0 1 1 1v1H8V5a1 1 0 0 1 1-1z"/><path d="M8 6H6.5A1.5 1.5 0 0 0 5 7.5v11A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 17.5 6H16"/><polyline points="9 12.5 10.8 14.3 15 10"/><path d="M9 17.5h6"/></svg>',
   check: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 12 9 17 20 6"/></svg>',
   plus: '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
   chev: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>',
@@ -168,6 +169,7 @@ const state = {
   movements: [],
   people: [],
   reorderCards: [],
+  pickLists: [],
   me: localStorage.getItem('ys_me') || '',
   q: '',
   cat: 'All',
@@ -249,17 +251,19 @@ async function refresh(showSpinner) {
       // A client may read their own products and nothing else — asking for the
       // team list or the movement log would simply come back empty or refused.
       state.products = (await DB.listProducts()) || [];
-      state.movements = []; state.people = []; state.reorderCards = [];
+      state.movements = []; state.people = []; state.reorderCards = []; state.pickLists = [];
     } else {
-      const [products, movements, people, cards, clients] = await Promise.all([
+      const [products, movements, people, cards, clients, picks] = await Promise.all([
         DB.listProducts(), DB.listMovements(300), DB.listPeople(), DB.listReorderCards(),
-        DB.listClients().catch(() => [])
+        DB.listClients().catch(() => []),
+        DB.listPickLists().catch(() => [])
       ]);
       state.products = products || [];
       state.movements = movements || [];
       state.people = people || [];
       state.reorderCards = cards || [];
       state.clients = clients || [];
+      state.pickLists = picks || [];
     }
     state.error = '';
   } catch (e) {
@@ -289,6 +293,7 @@ const TABS = [
   { id: 'stock', label: 'Stock', icon: I.box },
   { id: 'locations', label: 'Racks', icon: I.rack },
   { id: 'items', label: 'Items', icon: I.items },
+  { id: 'picking', label: 'Picking', icon: I.pick },
   { id: 'reorder', label: 'Order', icon: I.reorder },
   { id: 'activity', label: 'Log', icon: I.activity }
 ];
@@ -323,6 +328,7 @@ function renderHeader() {
     stock: ['Stock', state.products.length + ' line' + (state.products.length === 1 ? '' : 's')],
     locations: ['Racks', rackLetters.length ? rackLetters.join(', ') + ' · tap to open a bay' : 'Browse by rack'],
     items: ['Items', state.products.length + ' item' + (state.products.length === 1 ? '' : 's') + ' · manage catalogue'],
+    picking: ['Picking', 'Lists of what to fetch off the racks'],
     reorder: ['Reorder', 'The signal board — what to buy, and where it is'],
     activity: ['Log', 'Every movement, permanently']
   };
@@ -347,6 +353,7 @@ function renderTabs() {
   $('tabbar').innerHTML = TABS.map(tab => {
     let n = 0;
     if (tab.id === 'stock') n = lowCount;
+    else if (tab.id === 'picking') n = state.pickLists.filter(l => l.status !== 'done').length;
     else if (tab.id === 'reorder') n = toOrderCount;
     const badge = n ? '<span class="tab-badge">' + (n > 99 ? '99+' : n) + '</span>' : '';
     return '<button class="tab-btn ' + (state.screen === tab.id ? 'active' : '') + '" data-tab="' + tab.id + '" type="button">' +
@@ -408,6 +415,7 @@ function render() {
   else if (state.screen === 'stock') html += stockScreenHtml();
   else if (state.screen === 'locations') html += locationsScreenHtml();
   else if (state.screen === 'items') html += itemsScreenHtml();
+  else if (state.screen === 'picking') html += pickingScreenHtml();
   else if (state.screen === 'reorder') html += reorderScreenHtml();
   else html += activityScreenHtml();
   el.innerHTML = html;
@@ -417,6 +425,7 @@ function render() {
   else if (state.screen === 'stock') wireStock(el);
   else if (state.screen === 'locations') wireLocations(el);
   else if (state.screen === 'items') wireItems(el);
+  else if (state.screen === 'picking') wirePicking(el);
   else if (state.screen === 'reorder') wireReorder(el);
   else wireActivity(el);
 }
@@ -656,7 +665,7 @@ async function doSignOut() {
   DB.signOut();
   state.profile = null;
   state.products = []; state.movements = []; state.people = []; state.reorderCards = [];
-  state.clients = [];
+  state.clients = []; state.pickLists = [];
   state.q = '';
   // Signing out returns to the sign-in screen, never to the app. Until the
   // cutover the anon key still reads everything, so dropping a signed-out
@@ -1225,6 +1234,359 @@ function renderReorderPicker() {
     } catch (e) { toast(e.message || 'Could not add', 'bad'); }
   }));
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+}
+
+/* ===================== PICKING screen =====================
+   Somebody writes down what is needed; somebody else walks the racks and
+   fetches it. The picker often has no phone on them, so every list prints
+   on one sheet with the rack locations and a box to tick. Ticking lines off
+   in the app is the same job done the other way round, and booking the whole
+   list out at the end is one tap rather than one booking per line. */
+
+function pickLineName(l) {
+  if (l.products && l.products.name) return l.products.name;
+  const p = productById(l.product_id);
+  return p ? p.name : 'Deleted item';
+}
+function pickLineUnit(l) {
+  if (l.products && l.products.unit) return l.products.unit;
+  const p = productById(l.product_id);
+  return (p && p.unit) || 'ea';
+}
+function pickLineLoc(l) {
+  if (l.products && l.products.location) return l.products.location;
+  const p = productById(l.product_id);
+  return (p && p.location) || '';
+}
+function pickLines(list) {
+  // Walk order: by rack location, so the picker crosses the yard once.
+  return (list.pick_list_items || []).slice().sort((a, b) =>
+    String(pickLineLoc(a) || 'zzz').localeCompare(String(pickLineLoc(b) || 'zzz')));
+}
+function pickDone(list) {
+  const lines = list.pick_list_items || [];
+  return lines.length > 0 && lines.every(l => l.picked);
+}
+
+function pickingScreenHtml() {
+  const q = state.q.trim().toLowerCase();
+  const lists = state.pickLists
+    .filter(l => !q || [l.title, l.for_whom].some(v => String(v || '').toLowerCase().includes(q)));
+  const open = lists.filter(l => l.status !== 'done');
+  const done = lists.filter(l => l.status === 'done');
+
+  let html = searchRowHtml('Search picking lists…');
+  html += '<button class="new-item-btn" id="newPickBtn" type="button">' + I.plus + '<span>New picking list</span></button>';
+
+  if (!state.pickLists.length) {
+    html += '<div class="group"><div class="empty-note">No picking lists yet. Make one, add what is needed, then print it or hand it to whoever is fetching.</div></div>';
+    return html;
+  }
+
+  const card = (l) => {
+    const lines = l.pick_list_items || [];
+    const got = lines.filter(x => x.picked).length;
+    const pct = lines.length ? Math.round(got / lines.length * 100) : 0;
+    return '<div class="row"><div class="row-body" data-openpick="' + escapeHtml(l.id) + '">' +
+        '<div class="row-title">' + escapeHtml(l.title) +
+          (l.status === 'done' ? ' <span class="meta-chip good">done</span>' : '') + '</div>' +
+        '<div class="row-meta">' +
+          (l.for_whom ? '<span>' + escapeHtml(l.for_whom) + '</span>' : '') +
+          '<span>' + got + ' of ' + lines.length + ' picked</span>' +
+          '<span>' + escapeHtml(fmtWhen(l.created_at)) + '</span>' +
+        '</div>' +
+        (l.status !== 'done' ? '<div class="pick-bar"><span style="width:' + pct + '%"></span></div>' : '') +
+      '</div><span class="row-trail">' + I.chev + '</span></div>';
+  };
+
+  if (open.length) {
+    html += '<div class="field-label">To pick</div><div class="group">' + open.map(card).join('') + '</div>';
+  }
+  if (done.length) {
+    html += '<div class="field-label" style="margin-top:16px;">Finished</div><div class="group">' + done.map(card).join('') + '</div>';
+  }
+  if (!open.length && !done.length) {
+    html += '<div class="group"><div class="empty-note">Nothing matches that.</div></div>';
+  }
+  return html;
+}
+
+function wirePicking(el) {
+  wireSearch(el);
+  const nb = el.querySelector('#newPickBtn');
+  if (nb) nb.addEventListener('click', openNewPickSheet);
+  el.querySelectorAll('[data-openpick]').forEach(b =>
+    b.addEventListener('click', () => openPickSheet(b.getAttribute('data-openpick'))));
+}
+
+/* ---- Making one ---- */
+let pickDraft = null;
+
+function openNewPickSheet() {
+  pickDraft = { title: '', for_whom: '', note: '', lines: [], q: '' };
+  renderNewPickSheet();
+  openSheet();
+}
+
+function renderNewPickSheet() {
+  const d = pickDraft;
+  const q = d.q.trim().toLowerCase();
+  const matches = q
+    ? activeProducts()
+        .filter(p => [p.name, p.code, p.location].some(v => String(v || '').toLowerCase().includes(q)))
+        .filter(p => !d.lines.some(l => l.product_id === p.id))
+        .slice(0, 8)
+    : [];
+
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">New picking list</div>' +
+    '<div class="sheet-sub">What is needed, and who is fetching it.</div>' +
+    '<div class="form-card">' +
+      '<label class="form-field"><div class="ff-label">What is it for</div>' +
+        '<input id="pkTitle" type="text" value="' + escapeHtml(d.title) + '" placeholder="e.g. Job 1042 — oak table run"></label>' +
+      '<label class="form-field"><div class="ff-label">Who is fetching it</div>' +
+        '<input id="pkFor" type="text" value="' + escapeHtml(d.for_whom) + '" placeholder="e.g. Pieter"></label>' +
+    '</div>' +
+
+    '<div class="field-label">Items' + (d.lines.length ? ' · ' + d.lines.length : '') + '</div>' +
+    '<div class="group" style="margin-bottom:10px;">' +
+      (d.lines.length
+        ? d.lines.map(l => {
+            const p = productById(l.product_id);
+            return '<div class="row"><div class="row-body">' +
+              '<div class="row-title">' + escapeHtml(p ? p.name : 'Item') + '</div>' +
+              '<div class="row-meta">' + escapeHtml((p && p.location) || 'no rack') + ' · ' + fmtQty(p ? p.qty : 0) + ' in stock</div>' +
+            '</div>' +
+            '<input class="pick-qty" type="number" inputmode="decimal" min="0" step="any" value="' + escapeHtml(l.qty) + '" data-pkqty="' + escapeHtml(l.product_id) + '">' +
+            '<button class="row-trail" data-pkdrop="' + escapeHtml(l.product_id) + '" type="button" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button></div>';
+          }).join('')
+        : '<div class="empty-note">Nothing on the list yet. Search below and tap to add.</div>') +
+    '</div>' +
+
+    '<div class="search-row" style="background:var(--bg-elevated-2);">' +
+      '<span class="search-icon">' + I.search + '</span>' +
+      '<input type="search" id="pkSearch" placeholder="Add an item — name, SKU or rack" value="' + escapeHtml(d.q) + '" autocomplete="off">' +
+    '</div>' +
+    (matches.length
+      ? '<div class="group" style="margin-bottom:10px;">' + matches.map(p =>
+          '<div class="row"><div class="row-body" data-pkadd="' + escapeHtml(p.id) + '">' +
+            '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
+            '<div class="row-meta">' + escapeHtml(p.location || 'no rack') + ' · ' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + ' in stock</div>' +
+          '</div><span class="row-trail">' + I.plus + '</span></div>').join('') + '</div>'
+      : (q ? '<div class="empty-note">Nothing matches that.</div>' : '')) +
+
+    '<div class="sheet-actions">' +
+      '<button class="sheet-cancel" data-close type="button">Cancel</button>' +
+      '<button class="sheet-save" data-save type="button">Create list</button>' +
+    '</div>';
+
+  const search = $('pkSearch');
+  search.addEventListener('input', () => { pickDraft.q = search.value; renderNewPickSheet(); });
+  $('pkTitle').addEventListener('input', (e) => { pickDraft.title = e.target.value; });
+  $('pkFor').addEventListener('input', (e) => { pickDraft.for_whom = e.target.value; });
+
+  sheetEl.querySelectorAll('[data-pkadd]').forEach(b => b.addEventListener('click', () => {
+    const id = b.getAttribute('data-pkadd');
+    pickDraft.lines.push({ product_id: id, qty: 1 });
+    pickDraft.q = '';
+    renderNewPickSheet();
+  }));
+  sheetEl.querySelectorAll('[data-pkqty]').forEach(i => i.addEventListener('input', () => {
+    const line = pickDraft.lines.find(l => l.product_id === i.getAttribute('data-pkqty'));
+    if (line) line.qty = i.value;
+  }));
+  sheetEl.querySelectorAll('[data-pkdrop]').forEach(b => b.addEventListener('click', () => {
+    pickDraft.lines = pickDraft.lines.filter(l => l.product_id !== b.getAttribute('data-pkdrop'));
+    renderNewPickSheet();
+  }));
+  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+  sheetEl.querySelector('[data-save]').addEventListener('click', savePickList);
+
+  if (pickDraft.q) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
+}
+
+async function savePickList() {
+  const d = pickDraft;
+  d.title = ($('pkTitle').value || '').trim();
+  d.for_whom = ($('pkFor').value || '').trim();
+  if (!d.title) { $('pkTitle').focus(); toast('Give the list a name'); return; }
+  const lines = d.lines.filter(l => num(l.qty) > 0);
+  if (!lines.length) { toast('Add at least one item'); return; }
+
+  const btn = sheetEl.querySelector('[data-save]');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    const list = await DB.createPickList({
+      title: d.title, for_whom: d.for_whom || null, created_by: state.me || null
+    });
+    await DB.addPickItems(list.id, lines.map(l => ({ product_id: l.product_id, qty: num(l.qty) })));
+    await refresh();
+    toast('Picking list created · ' + d.title, 'good');
+    openPickSheet(list.id);
+  } catch (e) {
+    toast(e.message || 'Could not create that list', 'bad');
+    btn.disabled = false; btn.textContent = 'Create list';
+  }
+}
+
+/* ---- Working one ---- */
+function openPickSheet(id) {
+  renderPickSheet(id);
+  openSheet();
+}
+
+function renderPickSheet(id) {
+  const list = state.pickLists.find(l => l.id === id);
+  if (!list) { closeSheet(); return; }
+  const lines = pickLines(list);
+  const got = lines.filter(l => l.picked).length;
+  const finished = list.status === 'done';
+
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">' + escapeHtml(list.title) + '</div>' +
+    '<div class="sheet-sub">' +
+      (list.for_whom ? 'For ' + escapeHtml(list.for_whom) + ' · ' : '') +
+      got + ' of ' + lines.length + ' picked' +
+      (finished ? ' · finished ' + escapeHtml(fmtWhen(list.done_at)) : '') +
+    '</div>' +
+
+    '<div class="group" style="margin-bottom:12px;">' +
+      lines.map(l => {
+        const p = productById(l.product_id);
+        const short = p && num(p.qty) < num(l.qty);
+        return '<div class="row pick-row ' + (l.picked ? 'picked' : '') + '">' +
+          '<button class="pick-tick ' + (l.picked ? 'on' : '') + '" data-pktick="' + escapeHtml(l.id) + '" type="button" ' + (finished ? 'disabled' : '') + '>' +
+            (l.picked ? I.check : '') + '</button>' +
+          '<div class="row-body" data-pkitem="' + escapeHtml(l.product_id) + '">' +
+            '<div class="row-title">' + escapeHtml(pickLineName(l)) + '</div>' +
+            '<div class="row-meta"><span class="row-mono">' + escapeHtml(pickLineLoc(l) || 'no rack') + '</span>' +
+              (short ? '<span class="meta-chip warn">only ' + fmtQty(p.qty) + ' in stock</span>' : '') + '</div>' +
+          '</div>' +
+          '<span class="pick-need">' + fmtQty(l.qty) + '<small>' + escapeHtml(pickLineUnit(l)) + '</small></span>' +
+        '</div>';
+      }).join('') +
+    '</div>' +
+
+    (finished
+      ? ''
+      : '<div class="sheet-actions" style="margin-bottom:10px;">' +
+          '<button class="sheet-cancel" data-pkprint type="button" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;">' + I.print + ' Print list</button>' +
+          '<button class="sheet-save" data-pkdone type="button" ' + (got === lines.length && lines.length ? '' : 'disabled') + '>Book out picked</button>' +
+        '</div>') +
+
+    '<div class="sheet-actions">' +
+      '<button class="sheet-cancel" data-close type="button">Close</button>' +
+      (finished ? '<button class="sheet-cancel" data-pkprint type="button" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;">' + I.print + ' Print</button>' : '') +
+      '<button class="sheet-delete" data-pkdel type="button">' + I.trash + '</button>' +
+    '</div>';
+
+  sheetEl.querySelectorAll('[data-pktick]').forEach(b => b.addEventListener('click', async () => {
+    const lineId = b.getAttribute('data-pktick');
+    const line = (list.pick_list_items || []).find(x => x.id === lineId);
+    if (!line) return;
+    line.picked = !line.picked;          // optimistic: the tick must feel instant
+    renderPickSheet(id);
+    try { await DB.updatePickItem(lineId, { picked: line.picked }); }
+    catch (e) { line.picked = !line.picked; renderPickSheet(id); toast(e.message || 'Could not save that', 'bad'); }
+  }));
+  sheetEl.querySelectorAll('[data-pkitem]').forEach(b =>
+    b.addEventListener('click', () => openProductDetail(b.getAttribute('data-pkitem'))));
+  sheetEl.querySelectorAll('[data-pkprint]').forEach(b =>
+    b.addEventListener('click', () => printPickList(list)));
+  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+
+  const doneBtn = sheetEl.querySelector('[data-pkdone]');
+  if (doneBtn) doneBtn.addEventListener('click', () => finishPickList(list));
+
+  sheetEl.querySelector('[data-pkdel]').addEventListener('click', async () => {
+    if (!confirm('Delete "' + list.title + '"? The stock is not touched.')) return;
+    try {
+      await DB.removePickList(list.id);
+      await refresh();
+      closeSheet();
+      toast('Picking list deleted', 'good');
+    } catch (e) { toast(e.message || 'Could not delete that', 'bad'); }
+  });
+}
+
+/** Booking the whole list out in one go, rather than one movement at a time
+    through the move sheet. Each line still lands in the log on its own. */
+async function finishPickList(list) {
+  const lines = (list.pick_list_items || []).filter(l => l.picked);
+  if (!lines.length) return;
+  if (!confirm('Book out all ' + lines.length + ' picked item' + (lines.length === 1 ? '' : 's') + '? This takes them off the shelf for good.')) return;
+
+  const btn = sheetEl.querySelector('[data-pkdone]');
+  if (btn) { btn.disabled = true; btn.textContent = 'Booking out…'; }
+  const failed = [];
+  for (const l of lines) {
+    try {
+      await DB.applyMovement({
+        productId: l.product_id, delta: -num(l.qty), reason: 'out',
+        person: state.me || '', note: 'Picked · ' + list.title
+      });
+    } catch (e) { failed.push(pickLineName(l)); }
+  }
+  try {
+    await DB.updatePickList(list.id, { status: 'done', done_at: new Date().toISOString(), done_by: state.me || null });
+  } catch (e) { /* the movements are what matter; the flag can be retried */ }
+  await refresh();
+  closeSheet();
+  if (failed.length) toast(failed.length + ' line' + (failed.length === 1 ? '' : 's') + ' did not book out', 'bad');
+  else toast('Booked out · ' + list.title, 'good');
+}
+
+/* ---- On paper ----
+   For whoever is walking the racks without a phone: rack order, big tick
+   boxes, and room to write what was actually taken when it differs. */
+function pickListHtml(list) {
+  const lines = pickLines(list);
+  return '<div class="plist">' +
+    '<div class="plist-head">' +
+      '<div class="plist-title">' + escapeHtml(list.title) + '</div>' +
+      '<div class="plist-meta">' +
+        (list.for_whom ? '<span><b>For:</b> ' + escapeHtml(list.for_whom) + '</span>' : '') +
+        '<span><b>Raised:</b> ' + escapeHtml(fmtWhen(list.created_at)) + (list.created_by ? ' by ' + escapeHtml(list.created_by) : '') + '</span>' +
+        '<span><b>Lines:</b> ' + lines.length + '</span>' +
+      '</div>' +
+    '</div>' +
+    '<table class="plist-table">' +
+      '<thead><tr>' +
+        '<th class="pl-tick">Got</th><th class="pl-loc">Rack</th><th>Item</th>' +
+        '<th class="pl-sku">SKU</th><th class="pl-qty">Qty</th><th class="pl-took">Taken</th>' +
+      '</tr></thead><tbody>' +
+      lines.map(l => {
+        const p = productById(l.product_id);
+        const sku = (l.products && l.products.code) || (p && p.code) || '';
+        return '<tr>' +
+          '<td class="pl-tick"><span class="pl-box"></span></td>' +
+          '<td class="pl-loc">' + escapeHtml(pickLineLoc(l) || '—') + '</td>' +
+          '<td>' + escapeHtml(pickLineName(l)) + '</td>' +
+          '<td class="pl-sku">' + escapeHtml(sku) + '</td>' +
+          '<td class="pl-qty">' + fmtQty(l.qty) + ' ' + escapeHtml(pickLineUnit(l)) + '</td>' +
+          '<td class="pl-took"></td>' +
+        '</tr>';
+      }).join('') +
+    '</tbody></table>' +
+    '<div class="plist-foot">' +
+      '<div class="plist-sign"><span>Picked by</span></div>' +
+      '<div class="plist-sign"><span>Date</span></div>' +
+      '<div class="plist-sign"><span>Received by</span></div>' +
+    '</div>' +
+  '</div>';
+}
+
+function printPickList(list) {
+  let root = document.getElementById('printRoot');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'printRoot';
+    document.body.appendChild(root);
+  }
+  root.innerHTML = pickListHtml(list);
+  window.print();
 }
 
 /* ===================== LOG screen (movement history) ===================== */
@@ -2969,6 +3331,9 @@ function openFabSheet() {
       '<button class="detail-btn out" data-pickout type="button">' + I.arrowOut + ' Book out</button>' +
     '</div>' +
     '<div class="group" style="margin-top:6px;">' +
+      '<div class="row"><span class="thumb-ph">' + I.pick + '</span><div class="row-body" data-newpick>' +
+        '<div class="row-title">New picking list</div><div class="row-meta">What to fetch, and who is fetching it</div></div>' +
+        '<span class="row-trail">' + I.chev + '</span></div>' +
       '<div class="row"><span class="thumb-ph">' + I.plus + '</span><div class="row-body" data-newitem>' +
         '<div class="row-title">New item</div><div class="row-meta">Photo, name and a rack code</div></div>' +
         '<span class="row-trail">' + I.chev + '</span></div>' +
@@ -2976,6 +3341,7 @@ function openFabSheet() {
     '<div class="sheet-actions"><button class="sheet-cancel" data-close type="button">Cancel</button></div>';
   sheetEl.querySelector('[data-pickin]').addEventListener('click', () => openPickProduct('in'));
   sheetEl.querySelector('[data-pickout]').addEventListener('click', () => openPickProduct('out'));
+  sheetEl.querySelector('[data-newpick]').addEventListener('click', openNewPickSheet);
   sheetEl.querySelector('[data-newitem]').addEventListener('click', () => openItemForm(null));
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
   openSheet();

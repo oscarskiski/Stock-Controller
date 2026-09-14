@@ -665,6 +665,13 @@ img { display: block; }
      printers that only hold A4. */
   @page { margin: 10mm; }
   #printRoot .kcard { page-break-inside: avoid; break-inside: avoid; }
+
+  /* A picking list can run to several pages: keep the column headings on
+     each one, never split a line across a page break, and keep the
+     signature strip with whatever it follows. */
+  #printRoot .plist-table thead { display: table-header-group; }
+  #printRoot .plist-table tr { page-break-inside: avoid; break-inside: avoid; }
+  #printRoot .plist-foot { page-break-inside: avoid; break-inside: avoid; }
 }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
@@ -737,3 +744,49 @@ img { display: block; }
 .chrome-off #tabbar { display: none; }
 .chrome-off .wrap { padding-bottom: 24px; }
 .chrome-off #fabAdd { display: none; }
+
+/* ---------- Picking lists ---------- */
+.pick-bar { height: 3px; border-radius: 2px; background: var(--bg-elevated-3); margin-top: 8px; overflow: hidden; }
+.pick-bar span { display: block; height: 100%; background: var(--sys-blue); border-radius: 2px; }
+.pick-qty {
+  width: 62px; flex-shrink: 0; background: var(--bg-elevated-2); border: none; border-radius: var(--r-sm);
+  color: var(--label); font-size: 15px; text-align: center; padding: 8px 4px; outline: none;
+  font-variant-numeric: tabular-nums;
+}
+.pick-row.picked .row-title { text-decoration: line-through; color: var(--label-tertiary); }
+.pick-tick {
+  width: 28px; height: 28px; flex-shrink: 0; border-radius: 50%; cursor: pointer;
+  border: 2px solid var(--label-tertiary); background: none; color: #fff;
+  display: flex; align-items: center; justify-content: center; padding: 0;
+}
+.pick-tick.on { background: var(--sys-green); border-color: var(--sys-green); color: #04240f; }
+.pick-tick:disabled { opacity: 0.5; cursor: default; }
+.pick-need {
+  flex-shrink: 0; font-size: 17px; font-weight: 700; color: var(--label);
+  font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 3px;
+}
+.pick-need small { font-size: 11px; font-weight: 600; color: var(--label-tertiary); }
+.meta-chip.good { background: rgba(48,209,88,0.18); color: var(--sys-green); }
+.meta-chip.warn { background: rgba(255,159,10,0.18); color: var(--sys-orange); }
+
+/* ---------- Printed picking list (A4) ----------
+   Black on white with real rules: this gets carried round a yard, written on
+   with a pencil, and handed back. Nothing about it is dark-themed. */
+.plist { width: 100%; color: #000; font-family: var(--sans); }
+.plist-head { border-bottom: 1.2mm solid #000; padding-bottom: 3mm; margin-bottom: 4mm; }
+.plist-title { font-size: 18pt; font-weight: 800; line-height: 1.15; }
+.plist-meta { display: flex; flex-wrap: wrap; gap: 3mm 8mm; font-size: 9.5pt; margin-top: 2mm; }
+.plist-table { width: 100%; border-collapse: collapse; font-size: 10.5pt; }
+.plist-table th {
+  text-align: left; font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.04em;
+  border-bottom: 0.5mm solid #000; padding: 1.5mm 2mm;
+}
+.plist-table td { border-bottom: 0.2mm solid #999; padding: 3mm 2mm; vertical-align: middle; }
+.plist-table .pl-tick { width: 12mm; }
+.plist-table .pl-loc  { width: 22mm; font-family: ui-monospace, Menlo, monospace; font-weight: 700; }
+.plist-table .pl-sku  { width: 26mm; font-family: ui-monospace, Menlo, monospace; font-size: 9pt; }
+.plist-table .pl-qty  { width: 22mm; font-weight: 800; white-space: nowrap; }
+.plist-table .pl-took { width: 24mm; }
+.pl-box { display: block; width: 6mm; height: 6mm; border: 0.4mm solid #000; border-radius: 0.8mm; }
+.plist-foot { display: flex; gap: 8mm; margin-top: 12mm; }
+.plist-sign { flex: 1; border-top: 0.3mm solid #000; padding-top: 1.5mm; font-size: 8.5pt; }

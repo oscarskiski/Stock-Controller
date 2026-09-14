@@ -43,6 +43,13 @@ create policy products_client on public.products for select to authenticated
 -- business. Booking stock in and out is the whole job, so staff get full
 -- access to all three.
 -- ---------------------------------------------------------
+drop policy if exists pick_lists_all      on public.pick_lists;
+drop policy if exists pick_list_items_all on public.pick_list_items;
+create policy pick_lists_staff      on public.pick_lists      for all to authenticated
+  using (public.is_staff()) with check (public.is_staff());
+create policy pick_list_items_staff on public.pick_list_items for all to authenticated
+  using (public.is_staff()) with check (public.is_staff());
+
 drop policy if exists people_all         on public.people;
 drop policy if exists movements_all      on public.movements;
 drop policy if exists reorder_cards_all  on public.reorder_cards;
@@ -91,7 +98,8 @@ create policy profiles_admin on public.profiles for all to authenticated
 -- this runs: the anon key is in config.js, served to every visitor.
 -- ---------------------------------------------------------
 revoke all on public.people, public.products, public.movements,
-              public.reorder_cards, public.clients, public.profiles from anon;
+              public.reorder_cards, public.clients, public.profiles,
+              public.pick_lists, public.pick_list_items from anon;
 revoke execute on function public.apply_movement(uuid, numeric, text, text, text) from anon;
 
 -- Photos stay world-readable: they are shown in <img> tags, which cannot

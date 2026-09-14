@@ -106,7 +106,7 @@
      ========================================================= */
   const Local = {
     mode: 'local',
-    cache: { products: [], movements: [], people: [], reorder_cards: [] },
+    cache: { products: [], movements: [], people: [], reorder_cards: [], pick_lists: [], pick_list_items: [] },
     ready: null,
 
     /* Load all four keys, then assign in one go. Reading them one await at a
@@ -116,13 +116,16 @@
     init() {
       if (!this.ready) {
         this.ready = (async () => {
-          const [products, movements, people, cards] = await Promise.all([
-            kvGet('local:products'), kvGet('local:movements'), kvGet('local:people'), kvGet('local:reorder_cards')
+          const [products, movements, people, cards, lists, lines] = await Promise.all([
+            kvGet('local:products'), kvGet('local:movements'), kvGet('local:people'), kvGet('local:reorder_cards'),
+            kvGet('local:pick_lists'), kvGet('local:pick_list_items')
           ]);
-          this.cache.products      = products  || [];
-          this.cache.movements     = movements || [];
-          this.cache.people        = people    || [];
-          this.cache.reorder_cards = cards     || [];
+          this.cache.products        = products  || [];
+          this.cache.movements       = movements || [];
+          this.cache.people          = people    || [];
+          this.cache.reorder_cards   = cards     || [];
+          this.cache.pick_lists      = lists     || [];
+          this.cache.pick_list_items = lines     || [];
         })();
       }
       return this.ready;
@@ -234,6 +237,72 @@
       await this.init();
       this.cache.reorder_cards = this.cache.reorder_cards.filter(x => x.id !== id);
       await this.persist('reorder_cards');
+      return true;
+    },
+
+    /* ---- Picking lists ----
+       Shaped to match what PostgREST returns for the embedded query, so the
+       screen does not care which adapter it is talking to. */
+    async listPickLists() {
+      await this.init();
+      return this.cache.pick_lists
+        .map(l => Object.assign({}, l, {
+          pick_list_items: this.cache.pick_list_items
+            .filter(i => i.list_id === l.id)
+            .map(i => {
+              const p = this.cache.products.find(x => x.id === i.product_id);
+              return Object.assign({}, i, {
+                products: p ? { name: p.name, unit: p.unit, location: p.location, code: p.code, photo_url: p.photo_url } : null
+              });
+            })
+        }))
+        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    },
+    async createPickList(row) {
+      await this.init();
+      const out = Object.assign({ id: uuid(), status: 'open', created_at: nowIso() }, row);
+      this.cache.pick_lists.push(out);
+      await this.persist('pick_lists');
+      return out;
+    },
+    async updatePickList(id, patch) {
+      await this.init();
+      const row = this.cache.pick_lists.find(x => x.id === id);
+      if (!row) throw new Error('Picking list not found');
+      Object.assign(row, patch);
+      await this.persist('pick_lists');
+      return row;
+    },
+    async removePickList(id) {
+      await this.init();
+      this.cache.pick_lists = this.cache.pick_lists.filter(x => x.id !== id);
+      this.cache.pick_list_items = this.cache.pick_list_items.filter(x => x.list_id !== id);
+      await this.persist('pick_lists');
+      await this.persist('pick_list_items');
+      return true;
+    },
+    async addPickItems(listId, lines) {
+      await this.init();
+      const out = lines.map(l => ({
+        id: uuid(), list_id: listId, product_id: l.product_id,
+        qty: Number(l.qty) || 0, picked: false, created_at: nowIso()
+      }));
+      this.cache.pick_list_items = this.cache.pick_list_items.concat(out);
+      await this.persist('pick_list_items');
+      return out;
+    },
+    async updatePickItem(id, patch) {
+      await this.init();
+      const row = this.cache.pick_list_items.find(x => x.id === id);
+      if (!row) throw new Error('Line not found');
+      Object.assign(row, patch);
+      await this.persist('pick_list_items');
+      return row;
+    },
+    async removePickItem(id) {
+      await this.init();
+      this.cache.pick_list_items = this.cache.pick_list_items.filter(x => x.id !== id);
+      await this.persist('pick_list_items');
       return true;
     }
   };
@@ -377,6 +446,38 @@
     },
     async listPeople() {
       return await this.rest('people?select=*&active=eq.true&order=name.asc');
+    },
+
+    /* ---- Picking lists ----
+       The lines come back with their product embedded, so a printed list can
+       show the name and the rack without a second round trip. */
+    async listPickLists() {
+      return await this.rest('pick_lists?select=*,pick_list_items(*,products(name,unit,location,code,photo_url))&order=created_at.desc&limit=120');
+    },
+    async createPickList(row) {
+      const rows = await this.rest('pick_lists', {
+        method: 'POST', body: row, headers: { 'Prefer': 'return=representation' }
+      });
+      return rows[0];
+    },
+    async updatePickList(id, patch) {
+      await this.rest('pick_lists?id=eq.' + id, { method: 'PATCH', body: patch });
+    },
+    async removePickList(id) {
+      await this.rest('pick_lists?id=eq.' + id, { method: 'DELETE' });
+    },
+    async addPickItems(listId, lines) {
+      if (!lines.length) return [];
+      const body = lines.map(l => ({ list_id: listId, product_id: l.product_id, qty: Number(l.qty) || 0 }));
+      return await this.rest('pick_list_items', {
+        method: 'POST', body: body, headers: { 'Prefer': 'return=representation' }
+      });
+    },
+    async updatePickItem(id, patch) {
+      await this.rest('pick_list_items?id=eq.' + id, { method: 'PATCH', body: patch });
+    },
+    async removePickItem(id) {
+      await this.rest('pick_list_items?id=eq.' + id, { method: 'DELETE' });
     },
     async createProduct(p) {
       const person = p.__person || '';
@@ -665,6 +766,14 @@
     uploadPhoto(blob, pid)  { return this._write(() => impl.uploadPhoto(blob, pid)); },
     createReorderCard(c)       { return this._write(() => impl.createReorderCard(c)); },
     updateReorderCard(id, p)   { return this._write(() => impl.updateReorderCard(id, p)); },
+
+    listPickLists()            { return this._read('pick_lists', () => impl.listPickLists()); },
+    createPickList(row)        { return this._write(() => impl.createPickList(row)); },
+    updatePickList(id, p)      { return this._write(() => impl.updatePickList(id, p)); },
+    removePickList(id)         { return this._write(() => impl.removePickList(id)); },
+    addPickItems(id, lines)    { return this._write(() => impl.addPickItems(id, lines)); },
+    updatePickItem(id, p)      { return this._write(() => impl.updatePickItem(id, p)); },
+    removePickItem(id)         { return this._write(() => impl.removePickItem(id)); },
     deleteReorderCard(id)      { return this._write(() => impl.deleteReorderCard(id)); }
   };
 
