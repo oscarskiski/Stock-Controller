@@ -1356,7 +1356,7 @@ function renderNewPickSheet() {
             const p = productById(l.product_id);
             return '<div class="row"><div class="row-body">' +
               '<div class="row-title">' + escapeHtml(p ? p.name : 'Item') + '</div>' +
-              '<div class="row-meta">' + escapeHtml((p && p.location) || 'no rack') + ' · ' + fmtQty(p ? p.qty : 0) + ' in stock</div>' +
+              '<div class="row-meta">' + escapeHtml((p && p.location) || 'No rack') + ' · ' + fmtQty(p ? p.qty : 0) + ' in stock</div>' +
             '</div>' +
             '<input class="pick-qty" type="number" inputmode="decimal" min="0" step="any" value="' + escapeHtml(l.qty) + '" data-pkqty="' + escapeHtml(l.product_id) + '">' +
             '<button class="row-trail" data-pkdrop="' + escapeHtml(l.product_id) + '" type="button" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button></div>';
@@ -1372,7 +1372,7 @@ function renderNewPickSheet() {
       ? '<div class="group" style="margin-bottom:10px;">' + matches.map(p =>
           '<div class="row"><div class="row-body" data-pkadd="' + escapeHtml(p.id) + '">' +
             '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
-            '<div class="row-meta">' + escapeHtml(p.location || 'no rack') + ' · ' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + ' in stock</div>' +
+            '<div class="row-meta">' + escapeHtml(p.location || 'No rack') + ' · ' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + ' in stock</div>' +
           '</div><span class="row-trail">' + I.plus + '</span></div>').join('') + '</div>'
       : (q ? '<div class="empty-note">Nothing matches that.</div>' : '')) +
 
@@ -1461,7 +1461,7 @@ function renderPickSheet(id) {
             (l.picked ? I.check : '') + '</button>' +
           '<div class="row-body" data-pkitem="' + escapeHtml(l.product_id) + '">' +
             '<div class="row-title">' + escapeHtml(pickLineName(l)) + '</div>' +
-            '<div class="row-meta"><span class="row-mono">' + escapeHtml(pickLineLoc(l) || 'no rack') + '</span>' +
+            '<div class="row-meta"><span class="row-mono">' + escapeHtml(pickLineLoc(l) || 'No rack') + '</span>' +
               (short ? '<span class="meta-chip warn">only ' + fmtQty(p.qty) + ' in stock</span>' : '') + '</div>' +
           '</div>' +
           '<span class="pick-need">' + fmtQty(l.qty) + '<small>' + escapeHtml(pickLineUnit(l)) + '</small></span>' +

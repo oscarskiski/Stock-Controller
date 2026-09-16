@@ -86,7 +86,14 @@ img { display: block; }
 .group + .section-title { margin-top: 22px; }
 
 .row { display: flex; align-items: center; gap: 11px; padding: 11px 14px; position: relative; }
-.row + .row { border-top: 0.5px solid var(--separator); margin-left: 14px; }
+/* The divider between rows is inset to line up with the text, iOS-style. It
+   used to be a border on a row pushed in by margin-left, which moved the whole
+   row — so every row after the first sat 14px to the right of the first. Drawn
+   on its own, the divider keeps its inset and the text stays put. */
+.row + .row::before {
+  content: ''; position: absolute; top: 0; left: 14px; right: 0;
+  border-top: 0.5px solid var(--separator); pointer-events: none;
+}
 .row-body { flex: 1; min-width: 0; cursor: pointer; }
 .row-title { font-size: 16px; font-weight: 500; color: var(--label); line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-meta { font-size: 12.5px; color: var(--label-tertiary); margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
