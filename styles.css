@@ -260,7 +260,13 @@ img { display: block; }
 }
 .sheet-title { font-size: 22px; font-weight: 700; color: var(--label); margin-bottom: 4px; letter-spacing: -0.015em; }
 .sheet-sub { font-size: 13.5px; color: var(--label-secondary); margin-bottom: 14px; }
-.sheet input[type="text"], .sheet input[type="number"], .sheet input[type="search"] {
+/* A loose input in a sheet gets a filled box of its own. Inputs that already
+   sit inside something shaped — a form-card field, a search row, a quantity
+   cell in a list row — are excluded: this rule outranks their own styles on
+   specificity, so without the :not() it gave every one of them a second grey
+   box, padding and width:100%. On the picking list that last part stretched
+   each quantity field across its row and squeezed the item name to nothing. */
+.sheet input:is([type="text"], [type="number"], [type="search"]):not(.form-field input, .search-row input, .pick-qty) {
   width: 100%; background: var(--bg-elevated-2); color: var(--label); border: none; border-radius: var(--r-sm);
   padding: 12px 14px; font-size: 17px; margin-bottom: 10px; outline: none;
 }
@@ -749,7 +755,7 @@ img { display: block; }
 .pick-bar { height: 3px; border-radius: 2px; background: var(--bg-elevated-3); margin-top: 8px; overflow: hidden; }
 .pick-bar span { display: block; height: 100%; background: var(--sys-blue); border-radius: 2px; }
 .pick-qty {
-  width: 62px; flex-shrink: 0; background: var(--bg-elevated-2); border: none; border-radius: var(--r-sm);
+  width: 64px; flex-shrink: 0; margin: 0; background: var(--bg-elevated-2); border: none; border-radius: var(--r-sm);
   color: var(--label); font-size: 15px; text-align: center; padding: 8px 4px; outline: none;
   font-variant-numeric: tabular-nums;
 }
