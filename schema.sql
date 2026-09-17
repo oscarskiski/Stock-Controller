@@ -18,8 +18,9 @@ create table if not exists public.people (
 
 -- ---------------------------------------------------------
 -- Products / stock items
--- location is the yard "GPS", e.g. 'A3.1.1'
---   = rack A, bay 3, level 1, position 1
+-- location is the yard "GPS": codes like 'A1R1' or 'V2R3' — a letter A-Z,
+--   a number, then R and the rack number. Something that spans several
+--   locations stores them comma-separated: 'A1R1, A1R2'.
 -- ---------------------------------------------------------
 create table if not exists public.products (
   id          uuid primary key default gen_random_uuid(),

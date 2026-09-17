@@ -268,12 +268,12 @@ img { display: block; }
 .sheet-title { font-size: 22px; font-weight: 700; color: var(--label); margin-bottom: 4px; letter-spacing: -0.015em; }
 .sheet-sub { font-size: 13.5px; color: var(--label-secondary); margin-bottom: 14px; }
 /* A loose input in a sheet gets a filled box of its own. Inputs that already
-   sit inside something shaped — a form-card field, a search row, a quantity
-   cell in a list row — are excluded: this rule outranks their own styles on
+   sit inside something shaped — a form-card field, a search row, the location
+   picker, a quantity cell in a list row — are excluded: this rule outranks their own styles on
    specificity, so without the :not() it gave every one of them a second grey
    box, padding and width:100%. On the picking list that last part stretched
    each quantity field across its row and squeezed the item name to nothing. */
-.sheet input:is([type="text"], [type="number"], [type="search"]):not(.form-field input, .search-row input, .pick-qty) {
+.sheet input:is([type="text"], [type="number"], [type="search"]):not(.form-field input, .search-row input, .locpick-row input, .pick-qty) {
   width: 100%; background: var(--bg-elevated-2); color: var(--label); border: none; border-radius: var(--r-sm);
   padding: 12px 14px; font-size: 17px; margin-bottom: 10px; outline: none;
 }
@@ -366,21 +366,38 @@ img { display: block; }
 .pill-btn.active { background: var(--sys-blue); color: #fff; font-weight: 700; }
 
 /* ---------- Location picker ---------- */
+/* Location picker: the codes an item sits at, as removable chips, and a row
+   that reads like the code itself — [A] [1] R [1] Add. */
 .locpick { background: var(--bg-elevated-2); border-radius: var(--r-md); padding: 12px; margin-bottom: 12px; }
-.locpick-preview {
-  text-align: center; font-size: 27px; font-weight: 800; letter-spacing: 0.04em; color: var(--sys-teal);
-  font-variant-numeric: tabular-nums; margin-bottom: 12px;
+.loc-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 34px; align-items: center; margin-bottom: 12px; }
+.loc-none { font-size: 14px; color: var(--label-tertiary); padding-left: 2px; }
+.loc-chip {
+  display: inline-flex; align-items: center; gap: 2px; padding: 5px 4px 5px 11px; border-radius: var(--r-pill);
+  background: rgba(100,210,255,0.16); color: var(--sys-teal);
+  font-size: 15px; font-weight: 700; letter-spacing: 0.02em; font-variant-numeric: tabular-nums;
 }
-.locpick-preview.none { color: var(--label-tertiary); font-size: 17px; font-weight: 600; letter-spacing: 0; }
-.locpick-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.locpick-cell { display: flex; flex-direction: column; gap: 5px; }
-.locpick-cell label { font-size: 10.5px; font-weight: 700; color: var(--label-tertiary); text-transform: uppercase; letter-spacing: 0.05em; text-align: center; }
-.locpick-cell select, .locpick-cell input {
+.loc-chip.old { background: rgba(255,159,10,0.16); color: var(--sys-orange); }
+.loc-chip button {
+  width: 22px; height: 22px; border-radius: 50%; border: none; background: none; color: inherit;
+  font-size: 17px; line-height: 1; cursor: pointer; opacity: 0.75; padding: 0;
+}
+.loc-chip button:active { background: rgba(255,255,255,0.12); }
+.locpick-row { display: flex; align-items: center; gap: 6px; }
+.locpick-row select, .locpick-row input {
   background: var(--bg-elevated-3); color: var(--label); border: none; border-radius: 9px; padding: 10px 4px;
-  font-size: 15px; font-weight: 600; text-align: center; outline: none; width: 100%; -moz-appearance: textfield;
+  font-size: 16px; font-weight: 700; text-align: center; outline: none; min-width: 0; -moz-appearance: textfield;
 }
-.locpick-cell input::-webkit-outer-spin-button, .locpick-cell input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.locpick-clear { background: none; border: none; color: var(--sys-blue); font-size: 13.5px; font-weight: 600; cursor: pointer; padding: 10px 0 0; width: 100%; }
+.locpick-row select { flex: 0 0 56px; -webkit-appearance: none; appearance: none; }
+.locpick-row input { flex: 1 1 0; }
+.locpick-row input::-webkit-outer-spin-button, .locpick-row input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.locpick-r { font-size: 16px; font-weight: 800; color: var(--label-secondary); flex-shrink: 0; }
+.locpick-add {
+  flex: 0 0 auto; border: none; border-radius: 9px; padding: 10px 14px; cursor: pointer;
+  background: var(--sys-blue); color: #fff; font-size: 14.5px; font-weight: 700; font-family: var(--sans);
+}
+.locpick-add:active { transform: scale(0.97); }
+.locpick-hint { font-size: 12.5px; color: var(--label-tertiary); margin-top: 8px; line-height: 1.4; }
+.locpick-hint.bad { color: var(--sys-orange); }
 
 /* ---------- Detail sheet action buttons ---------- */
 .detail-actions { display: flex; gap: 10px; margin: 4px 0 14px; }
@@ -796,7 +813,7 @@ img { display: block; }
 }
 .plist-table td { border-bottom: 0.2mm solid #999; padding: 3mm 2mm; vertical-align: middle; }
 .plist-table .pl-tick { width: 12mm; }
-.plist-table .pl-loc  { width: 22mm; font-family: ui-monospace, Menlo, monospace; font-weight: 700; }
+.plist-table .pl-loc  { width: 22mm; font-family: ui-monospace, Menlo, monospace; font-weight: 700; line-height: 1.35; }
 .plist-table .pl-sku  { width: 26mm; font-family: ui-monospace, Menlo, monospace; font-size: 9pt; }
 .plist-table .pl-qty  { width: 22mm; font-weight: 800; white-space: nowrap; }
 .plist-table .pl-took { width: 24mm; }

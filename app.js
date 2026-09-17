@@ -112,24 +112,42 @@ function dayLabel(iso) {
 }
 function orDash(v) { const s = (v == null ? '' : String(v)).trim(); return s ? escapeHtml(s) : '—'; }
 
-/* ---- location helpers: "A3.1.1" = rack A, bay 3, level 1, position 1 ---- */
-function parseLoc(s) {
-  const m = /^([A-Za-z]{1,2})\s*(\d+)(?:[.\-](\d+))?(?:[.\-](\d+))?$/.exec(String(s || '').trim());
-  if (!m) return null;
-  return { rack: m[1].toUpperCase(), bay: m[2], level: m[3] || '', pos: m[4] || '' };
+/* ---- location helpers ----
+   A location is a code like A1R1 or V2R3: a letter A–Z, a number, then R and
+   the rack number. Some things span more than one, so products.location holds
+   a comma-separated list — "A1R1, A1R2" — in the same text column as before.
+   Anything that does not match (the old A3.1.1 style) is kept and shown as it
+   is, never dropped, and collects under "?" on the Racks screen to be fixed. */
+const LOC_RE = /^([A-Z])(\d{1,3})R(\d{1,3})$/;
+function normLoc(s) { return String(s || '').toUpperCase().replace(/\s+/g, ''); }
+/** Accepts the stored string or an array; always returns distinct codes. */
+function locList(v) {
+  const raw = Array.isArray(v) ? v.join(',') : String(v || '');
+  return Array.from(new Set(raw.split(',').map(normLoc).filter(Boolean)));
 }
-function buildLoc(rack, bay, level, pos) {
-  if (!rack || !bay) return '';
-  let s = rack.toUpperCase() + bay;
-  if (level) s += '.' + level;
-  if (level && pos) s += '.' + pos;
-  return s;
+function parseLoc(code) {
+  const m = LOC_RE.exec(normLoc(code));
+  return m ? { letter: m[1], num: Number(m[2]), rack: Number(m[3]) } : null;
 }
-function rackOf(loc) { const p = parseLoc(loc); return p ? p.rack : (loc ? '?' : ''); }
-function locSortKey(loc) {
-  const p = parseLoc(loc);
-  if (!p) return 'zzz' + String(loc || '');
-  return p.rack + String(p.bay).padStart(4, '0') + String(p.level || '0').padStart(4, '0') + String(p.pos || '0').padStart(4, '0');
+function buildLoc(letter, n, rack) {
+  const a = String(letter || '').toUpperCase(), b = parseInt(n, 10), c = parseInt(rack, 10);
+  if (!/^[A-Z]$/.test(a) || !(b > 0) || !(c > 0)) return '';
+  return a + b + 'R' + c;
+}
+/** Numeric, not alphabetical: A2R1 comes before A10R1. */
+function locSortKey(code) {
+  const p = parseLoc(code);
+  if (!p) return 'zzz' + normLoc(code);
+  return p.letter + String(p.num).padStart(4, '0') + String(p.rack).padStart(4, '0');
+}
+function sortLocs(v) { return locList(v).sort((a, b) => locSortKey(a).localeCompare(locSortKey(b))); }
+/** For display and for saving: sorted, one comma-space between codes. */
+function formatLocs(v) { return sortLocs(v).join(', '); }
+/** The first location in walking order, which is what an item sorts by. */
+function firstLoc(v) { return sortLocs(v)[0] || ''; }
+function locGroup(code) { const p = parseLoc(code); return p ? p.letter : '?'; }
+function locChipsHtml(v) {
+  return sortLocs(v).map(c => '<span class="meta-chip loc">' + escapeHtml(c) + '</span>').join('');
 }
 
 const CATEGORIES = ['Parts', 'Assembled', 'Raw materials'];
@@ -322,11 +340,11 @@ function renderHeader() {
   scan.hidden = false; gear.hidden = false; me.hidden = false;
 
   const dateStr = new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-  const rackLetters = Array.from(new Set(activeProducts().map(p => rackOf(p.location)).filter(r => r && r !== '?'))).sort();
+  const rackLetters = Array.from(new Set(activeProducts().flatMap(p => locList(p.location).map(locGroup)).filter(r => r !== '?'))).sort();
   const titles = {
     home: ['Home', (state.me || 'Sign in') + ' · ' + (CFG.SITE_NAME || 'Off-site store') + ' · ' + dateStr],
     stock: ['Stock', state.products.length + ' line' + (state.products.length === 1 ? '' : 's')],
-    locations: ['Racks', rackLetters.length ? rackLetters.join(', ') + ' · tap to open a bay' : 'Browse by rack'],
+    locations: ['Racks', rackLetters.length ? rackLetters.join(', ') + ' · tap a letter to open it' : 'Browse by location'],
     items: ['Items', state.products.length + ' item' + (state.products.length === 1 ? '' : 's') + ' · manage catalogue'],
     picking: ['Picking', 'Lists of what to fetch off the racks'],
     reorder: ['Reorder', 'The signal board — what to buy, and where it is'],
@@ -718,7 +736,7 @@ function homeScreenHtml() {
         : '<button class="order-btn" data-order="' + p.id + '" type="button">Order</button>';
       return '<div class="row"><div class="row-body" data-open="' + p.id + '">' +
         '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
-        '<div class="row-meta">' + (p.location ? '<span class="meta-chip loc">' + escapeHtml(p.location) + '</span>' : '') + '<span>' + shortfall + '</span></div>' +
+        '<div class="row-meta">' + locChipsHtml(p.location) + '<span>' + shortfall + '</span></div>' +
         '</div>' + action + '</div>';
     }).join('');
   }
@@ -804,7 +822,7 @@ function searchRowHtml(placeholder) {
 
 function productRowHtml(p) {
   const meta = [];
-  if (p.location) meta.push('<span class="meta-chip loc">' + escapeHtml(p.location) + '</span>');
+  if (p.location) meta.push(locChipsHtml(p.location));
   if (p.code) meta.push('<span class="meta-chip code">' + escapeHtml(p.code) + '</span>');
   if (p.category) meta.push('<span class="meta-chip cat">' + escapeHtml(p.category) + '</span>');
   const thumb = p.photo_url
@@ -924,52 +942,77 @@ function locationsScreenHtml() {
     ? base.filter(p => [p.name, p.code, p.location].some(v => String(v || '').toLowerCase().includes(q)))
     : base;
 
-  const racks = {};
+  // letter -> location code -> items. An item that spans several locations is
+  // listed under each of them, so it is found wherever someone goes looking.
+  const groups = {};
   pool.forEach(p => {
-    const r = p.location ? rackOf(p.location) : '—';
-    (racks[r] = racks[r] || []).push(p);
+    const codes = locList(p.location);
+    if (!codes.length) { ((groups['—'] = groups['—'] || {})[''] = groups['—'][''] || []).push(p); return; }
+    codes.forEach(c => {
+      const g = locGroup(c);
+      groups[g] = groups[g] || {};
+      (groups[g][c] = groups[g][c] || []).push(p);
+    });
   });
-  const rackNames = Object.keys(racks).sort((a, b) => (a === '—' ? 1 : b === '—' ? -1 : a.localeCompare(b)));
+  // Letters first, then anything in the old format, then items with no location.
+  const rank = (g) => (g === '—' ? 2 : g === '?' ? 1 : 0);
+  const names = Object.keys(groups).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
 
-  let html = searchRowHtml('Find a rack or an item…');
+  let html = searchRowHtml('Find a location or an item…');
 
-  if (!rackNames.length) {
-    html += '<div class="group"><div class="empty-note">Nothing stored yet. Give each product a rack code like <strong>A3.1.1</strong> — rack A, bay 3, level 1, position 1 — and it will show up here.</div></div>';
+  if (!names.length) {
+    html += '<div class="group"><div class="empty-note">Nothing stored yet. Give each item a location like <strong>A1R1</strong> — and more than one if it spans several — and it will show up here.</div></div>';
     return html;
   }
 
-  html += '<div class="section-title">' + rackNames.length + ' rack' + (rackNames.length === 1 ? '' : 's') + '</div>';
-  html += rackNames.map(r => {
-    const items = racks[r].slice().sort((a, b) => locSortKey(a.location).localeCompare(locSortKey(b.location)) || String(a.name).localeCompare(String(b.name)));
+  html += '<div class="section-title">' + names.length + ' group' + (names.length === 1 ? '' : 's') + '</div>';
+  html += names.map(g => {
+    const codes = sortLocs(Object.keys(groups[g]).filter(Boolean));
+    const items = Array.from(new Set([].concat.apply([], Object.values(groups[g]))));
     const units = items.reduce((s, p) => s + num(p.qty), 0);
-    const open = !!state.openRacks[r] || !!q;
-    const spots = new Set(items.map(p => p.location).filter(Boolean)).size;
+    const open = !!state.openRacks[g] || !!q;
+
+    const title = g === '—' ? 'No location set'
+      : g === '?' ? 'Old-style locations'
+      : codes.length === 1 ? codes[0]
+      : codes[0] + ' – ' + codes[codes.length - 1];
+    const sub = g === '?'
+      ? 'Change these to the A1R1 format'
+      : items.length + ' line' + (items.length === 1 ? '' : 's') + ' · ' + fmtQty(units) + ' units' +
+        (codes.length ? ' · ' + codes.length + ' location' + (codes.length === 1 ? '' : 's') : '');
 
     let body = '';
     if (open) {
       body = '<div class="rack-body">';
-      let lastLoc = null;
-      items.forEach(p => {
-        const loc = p.location || 'No location set';
-        if (loc !== lastLoc) { body += '<div class="loc-label">' + escapeHtml(loc) + '</div>'; lastLoc = loc; }
-        body += '<div class="row">' +
-          (p.photo_url ? '<img class="thumb" src="' + escapeHtml(p.photo_url) + '" alt="" loading="lazy">' : '<span class="thumb-ph">' + I.boxSmall + '</span>') +
-          '<div class="row-body" data-open="' + p.id + '">' +
-            '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
-            (p.code ? '<div class="row-meta"><span class="meta-chip code">' + escapeHtml(p.code) + '</span></div>' : '') +
-          '</div>' +
-          '<span class="qty-pill ' + qtyClass(p) + '"><span class="qn">' + fmtQty(p.qty) + '</span><span class="qu">' + escapeHtml(p.unit || 'ea') + '</span></span>' +
-          '</div>';
+      (codes.length ? codes : ['']).forEach(c => {
+        const here = (groups[g][c] || []).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+        body += '<div class="loc-label">' + escapeHtml(c || 'No location set') + '</div>';
+        here.forEach(p => {
+          const elsewhere = sortLocs(p.location).filter(x => x !== c);
+          body += '<div class="row">' +
+            (p.photo_url ? '<img class="thumb" src="' + escapeHtml(p.photo_url) + '" alt="" loading="lazy">' : '<span class="thumb-ph">' + I.boxSmall + '</span>') +
+            '<div class="row-body" data-open="' + p.id + '">' +
+              '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
+              ((p.code || elsewhere.length)
+                ? '<div class="row-meta">' +
+                    (p.code ? '<span class="meta-chip code">' + escapeHtml(p.code) + '</span>' : '') +
+                    (elsewhere.length ? '<span>also ' + escapeHtml(elsewhere.join(', ')) + '</span>' : '') +
+                  '</div>'
+                : '') +
+            '</div>' +
+            '<span class="qty-pill ' + qtyClass(p) + '"><span class="qn">' + fmtQty(p.qty) + '</span><span class="qu">' + escapeHtml(p.unit || 'ea') + '</span></span>' +
+            '</div>';
+        });
       });
       body += '</div>';
     }
 
     return '<div class="group" style="margin-bottom:10px;">' +
-      '<div class="rack-head" data-rack="' + escapeHtml(r) + '">' +
-        '<span class="rack-badge">' + escapeHtml(r) + '</span>' +
+      '<div class="rack-head" data-rack="' + escapeHtml(g) + '">' +
+        '<span class="rack-badge">' + escapeHtml(g) + '</span>' +
         '<div style="flex:1;min-width:0;">' +
-          '<div class="rack-name">' + (r === '—' ? 'No rack assigned' : 'Rack ' + escapeHtml(r)) + '</div>' +
-          '<div class="rack-sub">' + items.length + ' line' + (items.length === 1 ? '' : 's') + ' · ' + fmtQty(units) + ' units' + (spots ? ' · ' + spots + ' spot' + (spots === 1 ? '' : 's') : '') + '</div>' +
+          '<div class="rack-name">' + escapeHtml(title) + '</div>' +
+          '<div class="rack-sub">' + escapeHtml(sub) + '</div>' +
         '</div>' +
         '<span class="rack-chev ' + (open ? 'open' : '') + '">' + I.chev + '</span>' +
       '</div>' + body + '</div>';
@@ -1060,7 +1103,7 @@ function reorderColumnHtml(title, cards, rowFn, emptyText) {
 }
 function cardMetaBits(c, p) {
   const bits = [];
-  if (p && p.location) bits.push('<span class="meta-chip loc">' + escapeHtml(p.location) + '</span>');
+  if (p && p.location) bits.push(locChipsHtml(p.location));
   bits.push('<span>' + fmtQty(c.qty) + ' ' + escapeHtml((p && p.unit) || 'ea') + '</span>');
   if (c.supplier) bits.push('<span>' + escapeHtml(c.supplier) + '</span>');
   return bits.join('');
@@ -1132,7 +1175,7 @@ function openReorderCardSheet(c) {
     '<div class="sheet-handle"></div>' +
     (p && p.photo_url ? '<img class="photo-hero" src="' + escapeHtml(p.photo_url) + '" alt="">' : '') +
     '<div class="sheet-title">' + escapeHtml(cardProductName(c)) + '</div>' +
-    '<div class="sheet-sub">' + CARD_STATUS_LABEL[c.status] + (p && p.location ? ' · ' + escapeHtml(p.location) : '') + '</div>' +
+    '<div class="sheet-sub">' + CARD_STATUS_LABEL[c.status] + (p && p.location ? ' · ' + escapeHtml(formatLocs(p.location)) : '') + '</div>' +
     (p ? '<div class="detail-qty ' + qtyClass(p) + '" style="margin-bottom:10px;"><span class="dq">' + fmtQty(p.qty) + '</span><span class="du">' + escapeHtml(p.unit || 'ea') + ' currently in stock</span></div>' : '') +
     '<div class="form-card">' +
       (editable
@@ -1204,7 +1247,7 @@ function renderReorderPicker() {
       (list.length ? list.map(p =>
         '<div class="row"><div class="row-body" data-pickcard="' + p.id + '">' +
           '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
-          '<div class="row-meta">' + (p.location ? '<span class="meta-chip loc">' + escapeHtml(p.location) + '</span>' : '') +
+          '<div class="row-meta">' + locChipsHtml(p.location) +
           '<span class="meta-chip">' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + '</span></div>' +
         '</div><span class="row-trail">' + I.chev + '</span></div>').join('')
         : '<div class="empty-note">Nothing matches, or everything is already on the board.</div>') +
@@ -1259,9 +1302,9 @@ function pickLineLoc(l) {
   return (p && p.location) || '';
 }
 function pickLines(list) {
-  // Walk order: by rack location, so the picker crosses the yard once.
+  // Walk order: by each item's first location, so the picker crosses the yard once.
   return (list.pick_list_items || []).slice().sort((a, b) =>
-    String(pickLineLoc(a) || 'zzz').localeCompare(String(pickLineLoc(b) || 'zzz')));
+    locSortKey(firstLoc(pickLineLoc(a))).localeCompare(locSortKey(firstLoc(pickLineLoc(b)))));
 }
 function pickDone(list) {
   const lines = list.pick_list_items || [];
@@ -1356,7 +1399,7 @@ function renderNewPickSheet() {
             const p = productById(l.product_id);
             return '<div class="row"><div class="row-body">' +
               '<div class="row-title">' + escapeHtml(p ? p.name : 'Item') + '</div>' +
-              '<div class="row-meta">' + escapeHtml((p && p.location) || 'No rack') + ' · ' + fmtQty(p ? p.qty : 0) + ' in stock</div>' +
+              '<div class="row-meta">' + escapeHtml(formatLocs(p && p.location) || 'No location') + ' · ' + fmtQty(p ? p.qty : 0) + ' in stock</div>' +
             '</div>' +
             '<input class="pick-qty" type="number" inputmode="decimal" min="0" step="any" value="' + escapeHtml(l.qty) + '" data-pkqty="' + escapeHtml(l.product_id) + '">' +
             '<button class="row-trail" data-pkdrop="' + escapeHtml(l.product_id) + '" type="button" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button></div>';
@@ -1372,7 +1415,7 @@ function renderNewPickSheet() {
       ? '<div class="group" style="margin-bottom:10px;">' + matches.map(p =>
           '<div class="row"><div class="row-body" data-pkadd="' + escapeHtml(p.id) + '">' +
             '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
-            '<div class="row-meta">' + escapeHtml(p.location || 'No rack') + ' · ' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + ' in stock</div>' +
+            '<div class="row-meta">' + escapeHtml(formatLocs(p.location) || 'No location') + ' · ' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + ' in stock</div>' +
           '</div><span class="row-trail">' + I.plus + '</span></div>').join('') + '</div>'
       : (q ? '<div class="empty-note">Nothing matches that.</div>' : '')) +
 
@@ -1461,7 +1504,7 @@ function renderPickSheet(id) {
             (l.picked ? I.check : '') + '</button>' +
           '<div class="row-body" data-pkitem="' + escapeHtml(l.product_id) + '">' +
             '<div class="row-title">' + escapeHtml(pickLineName(l)) + '</div>' +
-            '<div class="row-meta"><span class="row-mono">' + escapeHtml(pickLineLoc(l) || 'No rack') + '</span>' +
+            '<div class="row-meta"><span class="row-mono">' + escapeHtml(formatLocs(pickLineLoc(l)) || 'No location') + '</span>' +
               (short ? '<span class="meta-chip warn">only ' + fmtQty(p.qty) + ' in stock</span>' : '') + '</div>' +
           '</div>' +
           '<span class="pick-need">' + fmtQty(l.qty) + '<small>' + escapeHtml(pickLineUnit(l)) + '</small></span>' +
@@ -1554,7 +1597,7 @@ function pickListHtml(list) {
     '</div>' +
     '<table class="plist-table">' +
       '<thead><tr>' +
-        '<th class="pl-tick">Got</th><th class="pl-loc">Rack</th><th>Item</th>' +
+        '<th class="pl-tick">Got</th><th class="pl-loc">Location</th><th>Item</th>' +
         '<th class="pl-sku">SKU</th><th class="pl-qty">Qty</th><th class="pl-took">Taken</th>' +
       '</tr></thead><tbody>' +
       lines.map(l => {
@@ -1562,7 +1605,7 @@ function pickListHtml(list) {
         const sku = (l.products && l.products.code) || (p && p.code) || '';
         return '<tr>' +
           '<td class="pl-tick"><span class="pl-box"></span></td>' +
-          '<td class="pl-loc">' + escapeHtml(pickLineLoc(l) || '—') + '</td>' +
+          '<td class="pl-loc">' + (sortLocs(pickLineLoc(l)).map(escapeHtml).join('<br>') || '—') + '</td>' +
           '<td>' + escapeHtml(pickLineName(l)) + '</td>' +
           '<td class="pl-sku">' + escapeHtml(sku) + '</td>' +
           '<td class="pl-qty">' + fmtQty(l.qty) + ' ' + escapeHtml(pickLineUnit(l)) + '</td>' +
@@ -2247,7 +2290,7 @@ function renderProductDetail(p) {
     '</div>' +
     '<div class="field-group" style="margin-bottom:12px;">' +
       '<div class="field-row"><span class="fname">Owner</span><span class="field-val">' + (clientNameOf(p) ? escapeHtml(clientNameOf(p)) + ' (client stock)' : 'Ours') + '</span></div>' +
-      '<div class="field-row"><span class="fname">Rack location</span><span class="field-val" style="color:var(--sys-teal);font-weight:700;font-variant-numeric:tabular-nums;">' + orDash(p.location) + '</span></div>' +
+      '<div class="field-row"><span class="fname">' + (locList(p.location).length > 1 ? 'Locations' : 'Location') + '</span><span class="field-val" style="color:var(--sys-teal);font-weight:700;font-variant-numeric:tabular-nums;">' + orDash(formatLocs(p.location)) + '</span></div>' +
       '<div class="field-row"><span class="fname">SKU</span><span class="field-val" style="font-family:ui-monospace,Menlo,monospace;">' + orDash(p.code) + '</span></div>' +
       '<div class="field-row"><span class="fname">Group / type</span><span class="field-val">' + orDash(p.group_name) + ' · ' + orDash(p.category) + '</span></div>' +
       '<div class="field-row"><span class="fname">Cost (budget)</span><span class="field-val">' + orDash(p.cost) + '</span></div>' +
@@ -2376,7 +2419,7 @@ function kanbanCardHtml(p) {
         reorderRow +
         row('Supplier', orDash(p.pref_supplier)) +
         (isMfg ? row('Lead Time', orDash(p.pref_lead_time)) : row('Place of Use', orDash(p.place_of_use))) +
-        row('Store Location', orDash(p.location)) +
+        row('Store Location', orDash(formatLocs(p.location))) +
       '</div>' +
     '</div>' +
   '</div>';
@@ -2601,7 +2644,7 @@ function renderMoveSheet() {
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
     '<div class="sheet-title">' + (MOVE_TITLES[moveCtx.dir] || 'Book out') + '</div>' +
-    '<div class="sheet-sub">' + escapeHtml(p.name) + (p.location ? ' · ' + escapeHtml(p.location) : '') + '</div>' +
+    '<div class="sheet-sub">' + escapeHtml(p.name) + (p.location ? ' · ' + escapeHtml(formatLocs(p.location)) : '') + '</div>' +
     '<div class="segmented">' +
       '<button class="seg-btn in ' + (moveCtx.dir === 'in' ? 'active' : '') + '" data-dir="in" type="button">' + I.arrowIn + ' In</button>' +
       '<button class="seg-btn out ' + (moveCtx.dir === 'out' ? 'active' : '') + '" data-dir="out" type="button">' + I.arrowOut + ' Out</button>' +
@@ -2726,7 +2769,6 @@ let itemDraft = null;
 
 function openItemForm(existing) {
   const p = existing || {};
-  const loc = parseLoc(p.location) || { rack: '', bay: '', level: '', pos: '' };
   const unit = p.unit || 'ea';
   const prefMoq = parseAmountUnit(p.pref_moq, unit);
   const secMoq = parseAmountUnit(p.sec_moq, unit);
@@ -2739,7 +2781,11 @@ function openItemForm(existing) {
     name: p.name || '', code: p.code || '', notes: p.notes || '',
     category: p.category || 'Parts', group_name: p.group_name || '',
     unit, qty: p.id ? num(p.qty) : 0, min_qty: num(p.min_qty) || '', cost: parseMoney(p.cost),
-    rack: loc.rack, bay: loc.bay, level: loc.level, pos: loc.pos, bulk_location: p.bulk_location || '',
+    locs: sortLocs(p.location),
+    // The letter the picker starts on: this item's own, so adding a neighbouring
+    // location is a two-number job.
+    locLetter: (parseLoc(firstLoc(p.location)) || {}).letter || 'A',
+    bulk_location: p.bulk_location || '',
     place_of_use: p.place_of_use || '',
     client_id: p.client_id || '',
     pref_supplier: p.pref_supplier || '',
@@ -2762,13 +2808,6 @@ function openItemForm(existing) {
 function uniqueValues(field) {
   return Array.from(new Set(state.products.map(p => p[field]).filter(v => v && String(v).trim()))).sort();
 }
-function uniqueRacks() {
-  const set = new Set();
-  state.products.forEach(p => { const r = rackOf(p.location); if (r && r !== '?') set.add(r); });
-  'ABCDEFGHIJ'.split('').forEach(r => set.add(r));
-  return Array.from(set).sort();
-}
-
 function formFieldHtml(id, label, value, opts) {
   opts = opts || {};
   const tag = opts.textarea ? 'textarea' : 'input';
@@ -2820,8 +2859,6 @@ function clientHintText(d) {
 function renderItemForm() {
   const d = itemDraft;
   const editing = !!d.id;
-  const locStr = buildLoc(d.rack, d.bay, d.level, d.pos);
-  const rackOpts = uniqueRacks();
   const groups = uniqueValues('group_name');
 
   sheetEl.innerHTML =
@@ -2872,17 +2909,19 @@ function renderItemForm() {
 
     '<div class="form-section-label">Location</div>' +
     '<div class="locpick">' +
-      '<div class="locpick-preview ' + (locStr ? '' : 'none') + '">' + (locStr ? escapeHtml(locStr) : 'No rack location set') + '</div>' +
-      '<div class="locpick-grid">' +
-        '<div class="locpick-cell"><label>Rack</label>' +
-          '<select id="lRack"><option value="">—</option>' +
-          rackOpts.map(r => '<option value="' + r + '" ' + (d.rack === r ? 'selected' : '') + '>' + r + '</option>').join('') +
-          '</select></div>' +
-        '<div class="locpick-cell"><label>Bay</label><input id="lBay" type="number" inputmode="numeric" min="1" max="999" value="' + escapeHtml(d.bay) + '" placeholder="–"></div>' +
-        '<div class="locpick-cell"><label>Level</label><input id="lLevel" type="number" inputmode="numeric" min="1" max="99" value="' + escapeHtml(d.level) + '" placeholder="–"></div>' +
-        '<div class="locpick-cell"><label>Pos</label><input id="lPos" type="number" inputmode="numeric" min="1" max="99" value="' + escapeHtml(d.pos) + '" placeholder="–"></div>' +
+      '<div class="loc-chips" id="locChips">' + locEditChipsHtml(d.locs) + '</div>' +
+      // Laid out the way the code reads — letter, number, R, number — so the
+      // format explains itself without a label on every box.
+      '<div class="locpick-row">' +
+        '<select id="lLetter" aria-label="Letter">' +
+          'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(x => '<option' + (d.locLetter === x ? ' selected' : '') + '>' + x + '</option>').join('') +
+        '</select>' +
+        '<input id="lNum" type="number" inputmode="numeric" min="1" max="999" placeholder="1" aria-label="Number">' +
+        '<span class="locpick-r">R</span>' +
+        '<input id="lRackNo" type="number" inputmode="numeric" min="1" max="999" placeholder="1" aria-label="Rack">' +
+        '<button class="locpick-add" data-locadd type="button">Add</button>' +
       '</div>' +
-      '<button class="locpick-clear" data-locclear type="button">Clear location</button>' +
+      '<div class="locpick-hint" id="locHint">For example A1R1. Add more than one if it spans several.</div>' +
     '</div>' +
     '<div class="form-card" style="margin-top:10px;">' +
       formFieldHtml('fBulk', 'Bulk location', d.bulk_location, { placeholder: 'e.g. Yard 2, bay 4' }) +
@@ -2933,13 +2972,7 @@ function renderItemForm() {
       fPackWeightQty: 'pack_weight_qty', fPackWeightUnit: 'pack_weight_unit' };
     if (map[key]) d[map[key]] = e.value;
   }));
-  ['lBay', 'lLevel', 'lPos'].forEach((id, i) => {
-    const key = ['bay', 'level', 'pos'][i];
-    const e = $(id);
-    e.addEventListener('input', () => { d[key] = e.value.replace(/\D/g, ''); updateLocPreview(); });
-  });
-  $('lRack').addEventListener('change', () => { d.rack = $('lRack').value; updateLocPreview(); });
-  sheetEl.querySelector('[data-locclear]').addEventListener('click', () => { d.rack = ''; d.bay = ''; d.level = ''; d.pos = ''; renderItemForm(); });
+  wireLocPicker(d);
   sheetEl.querySelectorAll('[data-pcat]').forEach(b => b.addEventListener('click', () => {
     d.category = b.getAttribute('data-pcat');
     sheetEl.querySelectorAll('[data-pcat]').forEach(x => x.classList.toggle('active', x.getAttribute('data-pcat') === d.category));
@@ -2967,13 +3000,56 @@ function renderItemForm() {
   if (del) del.addEventListener('click', deleteItem);
 }
 
-function updateLocPreview() {
-  const d = itemDraft;
-  const s = buildLoc(d.rack, d.bay, d.level, d.pos);
-  const el = sheetEl.querySelector('.locpick-preview');
-  if (!el) return;
-  el.className = 'locpick-preview' + (s ? '' : ' none');
-  el.textContent = s || 'No rack location set';
+function locEditChipsHtml(locs) {
+  if (!locs.length) return '<span class="loc-none">No location yet</span>';
+  return locs.map(c =>
+    '<span class="loc-chip' + (parseLoc(c) ? '' : ' old') + '"' + (parseLoc(c) ? '' : ' title="Old format — remove it and add the A1R1 version"') + '>' +
+      escapeHtml(c) +
+      '<button type="button" data-locdel="' + escapeHtml(c) + '" aria-label="Remove ' + escapeHtml(c) + '">×</button>' +
+    '</span>').join('');
+}
+
+/** Only the chips and the hint are redrawn, never the whole form: this sits
+    halfway down a long sheet, and a full re-render would jump back to the top
+    and drop the keyboard between one location and the next. */
+function wireLocPicker(d) {
+  const chips = $('locChips'), hint = $('locHint');
+  const letter = $('lLetter'), n = $('lNum'), rack = $('lRackNo');
+
+  const say = (msg, bad) => { hint.textContent = msg; hint.classList.toggle('bad', !!bad); };
+  const redraw = () => { chips.innerHTML = locEditChipsHtml(d.locs); wireChips(); };
+  const wireChips = () => chips.querySelectorAll('[data-locdel]').forEach(b => b.addEventListener('click', () => {
+    d.locs = d.locs.filter(x => x !== b.getAttribute('data-locdel'));
+    redraw();
+    say(d.locs.length ? 'Removed.' : 'For example A1R1. Add more than one if it spans several.');
+  }));
+
+  const add = () => {
+    const code = buildLoc(letter.value, n.value, rack.value);
+    if (!code) { say('Fill in both numbers — for example ' + letter.value + '1R1.', true); (n.value ? rack : n).focus(); return; }
+    if (d.locs.includes(code)) { say(code + ' is already on this item.', true); return; }
+    d.locs = sortLocs(d.locs.concat(code));
+    d.locLetter = letter.value;
+    redraw();
+    n.value = ''; rack.value = '';
+    say('Added ' + code + '.');
+    n.focus();
+  };
+
+  letter.addEventListener('change', () => { d.locLetter = letter.value; });
+  sheetEl.querySelector('[data-locadd]').addEventListener('click', add);
+  rack.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+  n.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); rack.focus(); } });
+  wireChips();
+}
+
+/** Numbers typed into the picker but never added would otherwise be lost on
+    Save — the easiest mistake to make with a separate Add button. */
+function takePendingLoc(d) {
+  const letter = $('lLetter'), n = $('lNum'), rack = $('lRackNo');
+  if (!letter || !n || !rack) return;
+  const code = buildLoc(letter.value, n.value, rack.value);
+  if (code && !d.locs.includes(code)) d.locs = sortLocs(d.locs.concat(code));
 }
 
 
@@ -3200,6 +3276,7 @@ function usePhotoBlob(blob) {
 
 async function saveItem() {
   const d = itemDraft;
+  takePendingLoc(d);
   d.name = ($('fName').value || '').trim();
   if (!d.name) { $('fName').focus(); toast('Give it a name first'); return; }
 
@@ -3215,7 +3292,7 @@ async function saveItem() {
     const payload = {
       name: d.name, code: (d.code || '').trim(), notes: (d.notes || '').trim(),
       category: d.category, group_name: (d.group_name || '').trim() || null,
-      location: buildLoc(d.rack, d.bay, d.level, d.pos), unit: d.unit,
+      location: formatLocs(d.locs) || null, unit: d.unit,
       min_qty: num(d.min_qty), cost: formatMoney(d.cost),
       bulk_location: (d.bulk_location || '').trim() || null,
       place_of_use: (d.place_of_use || '').trim() || null,
@@ -3373,7 +3450,7 @@ function renderPickProduct(dir) {
       (list.length ? list.map(p =>
         '<div class="row"><div class="row-body" data-pick="' + p.id + '">' +
           '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
-          '<div class="row-meta">' + (p.location ? '<span class="meta-chip loc">' + escapeHtml(p.location) + '</span>' : '') +
+          '<div class="row-meta">' + locChipsHtml(p.location) +
           '<span class="meta-chip">' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + '</span></div>' +
         '</div><span class="row-trail">' + I.chev + '</span></div>').join('')
         : '<div class="empty-note">Nothing matches that.</div>') +
