@@ -531,7 +531,7 @@ img { display: block; }
    height stops being square, and the crop maths assumes a square stage. */
 .crop-stage {
   position: relative; width: min(100%, 52vh); aspect-ratio: 1; margin: 4px auto 12px;
-  overflow: hidden; border-radius: var(--r-md); background: #000;
+  overflow: hidden; border-radius: var(--r-md); background: #fff;
   touch-action: none; cursor: grab; user-select: none;
 }
 .crop-stage:active { cursor: grabbing; }
@@ -542,6 +542,14 @@ img { display: block; }
 .crop-zoom-row { display: flex; align-items: center; gap: 10px; padding: 0 2px 6px; }
 .crop-zoom-mark { color: var(--label-tertiary); display: flex; flex-shrink: 0; }
 .crop-zoom-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--sys-blue); }
+/* 44px of tappable area, because this sits under a thumb on a phone. */
+.crop-rotate {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; margin: -6px -8px -6px 0; padding: 0;
+  background: none; border: 0; color: var(--sys-blue); cursor: pointer;
+  -webkit-appearance: none; -webkit-tap-highlight-color: transparent;
+}
+.crop-rotate:active { opacity: 0.5; }
 
 /* ---------- QR scanner sheet ---------- */
 .scan-stage {

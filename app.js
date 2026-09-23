@@ -77,7 +77,8 @@ const I = {
   reorder: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="9.5" y="4" width="5" height="10" rx="1.5"/><rect x="16" y="4" width="5" height="13" rx="1.5"/></svg>',
   truck: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="19" r="1.6"/><circle cx="17.5" cy="19" r="1.6"/></svg>',
   scan: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8V5.5A2.5 2.5 0 0 1 5.5 3H8"/><path d="M16 3h2.5A2.5 2.5 0 0 1 21 5.5V8"/><path d="M21 16v2.5a2.5 2.5 0 0 1-2.5 2.5H16"/><path d="M8 21H5.5A2.5 2.5 0 0 1 3 18.5V16"/><path d="M3 12h18"/></svg>',
-  print: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M6 14h12v7H6z"/></svg>'
+  print: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M6 14h12v7H6z"/></svg>',
+  rotate: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3.5V9h-5.5"/></svg>'
 };
 
 /* ===================== Small utils ===================== */
@@ -3057,8 +3058,29 @@ function takePendingLoc(d) {
    A square crop, because the photo is shown at three different shapes — the
    16:10 tile and hero in the app, and the 10:9 box on the printed card. A
    square covers all three with the least surprise. Drag to pan, pinch or
-   slide to zoom; the frame is the stage itself, so what you see is the crop. */
+   slide to zoom; the frame is the stage itself, so what you see is the crop.
+
+   The square is the shape that gets saved, but it no longer forces anything
+   to be thrown away: the zoom winds out past "fill the frame" all the way to
+   "the whole photo fits", and the slack around it is filled white. Before
+   that, a portrait photo always lost its top and bottom whatever you did.
+
+   Rotate turns the photo in 90° steps. Everything below works in the photo's
+   rotated dimensions — see cropDims — so a quarter turn needs no special
+   cases in the pan, zoom or clamp maths. */
 let cropCtx = null;
+
+/** The photo's dimensions the right way up for the current rotation: a
+    quarter turn swaps them. All the pan/zoom maths is in these, never in
+    naturalWidth/naturalHeight directly. */
+function cropDims() {
+  const c = cropCtx;
+  const quarter = (c.rot % 180) !== 0;
+  return {
+    w: quarter ? c.img.naturalHeight : c.img.naturalWidth,
+    h: quarter ? c.img.naturalWidth : c.img.naturalHeight
+  };
+}
 
 async function openCropSheet(source, onDone) {
   releaseCrop();
@@ -3079,7 +3101,7 @@ async function openCropSheet(source, onDone) {
     return;
   }
 
-  cropCtx = { img, url, revoke: isBlob, onDone, zoom: 1, tx: 0, ty: 0, base: 1, stage: 0, pointers: new Map() };
+  cropCtx = { img, url, revoke: isBlob, onDone, zoom: 1, tx: 0, ty: 0, base: 1, minZoom: 1, rot: 0, stage: 0, pointers: new Map() };
   renderCropSheet();
   openSheet();
 }
@@ -3095,11 +3117,14 @@ function renderCropSheet() {
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
     '<div class="sheet-title">Crop photo</div>' +
-    '<div class="sheet-sub">Drag to move, pinch or slide to zoom. The square is what gets saved.</div>' +
+    '<div class="sheet-sub">Drag to move, pinch or slide to zoom. Wind the zoom all the way down to fit the whole photo in. The square is what gets saved.</div>' +
     '<div class="crop-stage" id="cropStage"></div>' +
     '<div class="crop-zoom-row">' +
       '<span class="crop-zoom-mark">' + I.search + '</span>' +
-      '<input type="range" id="cropZoom" min="1" max="5" step="0.01" value="' + c.zoom + '">' +
+      // min is a placeholder: the real floor depends on the photo's shape and
+      // is only known once the stage has been measured. See layoutCrop.
+      '<input type="range" id="cropZoom" min="0.1" max="5" step="0.01" value="' + c.zoom + '">' +
+      '<button class="crop-rotate" data-croprotate type="button" title="Rotate" aria-label="Rotate the photo a quarter turn">' + I.rotate + '</button>' +
     '</div>' +
     '<div class="sheet-actions">' +
       '<button class="sheet-cancel" data-cropcancel type="button">Cancel</button>' +
@@ -3125,6 +3150,13 @@ function renderCropSheet() {
     const half = c.stage / 2;
     zoomCrop(parseFloat(ev.target.value), half, half);
   });
+  sheetEl.querySelector('[data-croprotate]').addEventListener('click', () => {
+    c.rot = (c.rot + 90) % 360;
+    // Re-centre on the turn. A quarter turn leaves the scale alone (both the
+    // cover and fit scales are computed off the short and long edge, which
+    // only swap), so only the framing needs settling again.
+    layoutCrop();
+  });
   sheetEl.querySelector('[data-cropcancel]').addEventListener('click', () => {
     const done = cropCtx.onDone;
     releaseCrop();
@@ -3138,33 +3170,58 @@ function layoutCrop() {
   if (!stage || !cropCtx) return;
   const c = cropCtx;
   c.stage = stage.clientWidth;
-  // Start at "cover": the smallest scale that fills the square, so the crop
-  // frame is never showing empty space.
-  c.base = Math.max(c.stage / c.img.naturalWidth, c.stage / c.img.naturalHeight);
+  const d = cropDims();
+  // Zoom 1 is still "cover" — the scale that fills the square — so opening a
+  // photo frames it the way it always did. The slider now reaches below 1,
+  // down to the scale where the whole photo fits inside the square.
+  c.base = Math.max(c.stage / d.w, c.stage / d.h);
+  c.minZoom = Math.min(c.stage / d.w, c.stage / d.h) / c.base;
+  if (c.zoom < c.minZoom) c.zoom = c.minZoom;
   const s = c.base * c.zoom;
-  c.tx = (c.stage - c.img.naturalWidth * s) / 2;
-  c.ty = (c.stage - c.img.naturalHeight * s) / 2;
+  c.tx = (c.stage - d.w * s) / 2;
+  c.ty = (c.stage - d.h * s) / 2;
   clampCrop();
   paintCrop();
+  syncZoomSlider();
+}
+
+/** The slider's floor is per-photo, so it can only be set once the photo and
+    the stage have both been measured. */
+function syncZoomSlider() {
+  const slider = $('cropZoom');
+  if (!slider || !cropCtx) return;
+  slider.min = cropCtx.minZoom;
+  slider.value = cropCtx.zoom;
 }
 
 function clampCrop() {
   const c = cropCtx, s = c.base * c.zoom;
-  const dw = c.img.naturalWidth * s, dh = c.img.naturalHeight * s;
-  c.tx = Math.min(0, Math.max(c.stage - dw, c.tx));
-  c.ty = Math.min(0, Math.max(c.stage - dh, c.ty));
+  const d = cropDims();
+  const dw = d.w * s, dh = d.h * s;
+  // Zoomed out past "fill the frame" the photo is smaller than the stage on
+  // one axis or both. Centre it on those axes — clamping it as if it were
+  // larger would jam it against an edge and pile all the white on one side.
+  c.tx = dw <= c.stage ? (c.stage - dw) / 2 : Math.min(0, Math.max(c.stage - dw, c.tx));
+  c.ty = dh <= c.stage ? (c.stage - dh) / 2 : Math.min(0, Math.max(c.stage - dh, c.ty));
 }
 
 function paintCrop() {
-  const c = cropCtx;
-  c.img.style.transform = 'translate(' + c.tx + 'px,' + c.ty + 'px) scale(' + (c.base * c.zoom) + ')';
+  const c = cropCtx, s = c.base * c.zoom;
+  const W = c.img.naturalWidth, H = c.img.naturalHeight;
+  // CSS applies these right to left, so the photo is turned first and then
+  // nudged back: rotating about the origin swings it off into negative space,
+  // and each quarter turn needs a different shove to put its corner at 0,0.
+  const nudge = { 0: [0, 0], 90: [H, 0], 180: [W, H], 270: [0, W] }[c.rot] || [0, 0];
+  c.img.style.transform =
+    'translate(' + c.tx + 'px,' + c.ty + 'px) scale(' + s + ') ' +
+    'translate(' + nudge[0] + 'px,' + nudge[1] + 'px) rotate(' + c.rot + 'deg)';
 }
 
 /** Zoom about a point in stage coordinates, so whatever is under the fingers
     (or the cursor) stays put rather than the image sliding away from them. */
 function zoomCrop(next, fx, fy) {
   const c = cropCtx;
-  next = Math.max(1, Math.min(5, next));
+  next = Math.max(c.minZoom, Math.min(5, next));
   const ratio = next / c.zoom;
   c.tx = fx - (fx - c.tx) * ratio;
   c.ty = fy - (fy - c.ty) * ratio;
@@ -3212,6 +3269,24 @@ function onCropUp(ev) {
   cropCtx.pointers.delete(ev.pointerId);
 }
 
+/** The photo with its rotation baked in, as something drawImage can read
+    exactly like the original. Turning and cropping in a single drawImage
+    would mean carrying the source rectangle through the rotation by hand;
+    doing the turn first leaves the crop maths identical to the unrotated
+    case, which is worth one throwaway canvas. */
+function rotatedSource() {
+  const c = cropCtx;
+  if (!c.rot) return c.img;
+  const d = cropDims();
+  const cv = document.createElement('canvas');
+  cv.width = d.w; cv.height = d.h;
+  const x = cv.getContext('2d');
+  x.translate(d.w / 2, d.h / 2);
+  x.rotate(c.rot * Math.PI / 180);
+  x.drawImage(c.img, -c.img.naturalWidth / 2, -c.img.naturalHeight / 2);
+  return cv;
+}
+
 async function applyCrop() {
   const c = cropCtx;
   const btn = sheetEl.querySelector('[data-cropdone]');
@@ -3221,7 +3296,13 @@ async function applyCrop() {
   const out = Math.max(240, Math.min(CFG.PHOTO_MAX_PX || 1400, Math.round(side)));
   const canvas = document.createElement('canvas');
   canvas.width = out; canvas.height = out;
-  canvas.getContext('2d').drawImage(c.img, -c.tx / s, -c.ty / s, side, side, 0, 0, out, out);
+  const ctx = canvas.getContext('2d');
+  // Zoomed out, the frame reaches past the edges of the photo. White rather
+  // than transparent: these get printed onto Kanban cards, and a transparent
+  // JPEG comes out black.
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, out, out);
+  ctx.drawImage(rotatedSource(), -c.tx / s, -c.ty / s, side, side, 0, 0, out, out);
 
   let blob = null;
   try {
