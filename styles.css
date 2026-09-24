@@ -542,6 +542,15 @@ img { display: block; }
 .crop-zoom-row { display: flex; align-items: center; gap: 10px; padding: 0 2px 6px; }
 .crop-zoom-mark { color: var(--label-tertiary); display: flex; flex-shrink: 0; }
 .crop-zoom-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--sys-blue); }
+/* Dropping a photo in from another window. */
+.photo-tile.dropping {
+  outline: 2px dashed var(--sys-blue); outline-offset: -6px;
+  background: rgba(10,132,255,0.12);
+}
+.photo-hint {
+  margin: -6px 2px 12px; font-size: 12.5px; color: var(--label-tertiary); text-align: center;
+}
+
 /* 44px of tappable area, because this sits under a thumb on a phone. */
 .crop-rotate {
   flex-shrink: 0; display: flex; align-items: center; justify-content: center;

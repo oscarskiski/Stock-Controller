@@ -2874,6 +2874,10 @@ function renderItemForm() {
       '</button>' +
       (d.photo_url ? '<button class="photo-crop" data-recrop type="button">Crop</button>' : '') +
     '</div>' +
+    // Invisible otherwise: nobody guesses at a drop target.
+    (canDropPhotos()
+      ? '<div class="photo-hint">Drag a picture in from WhatsApp, or copy it and press Ctrl+V</div>'
+      : '') +
 
     '<div class="form-section-label">Basics</div>' +
     '<div class="form-card">' +
@@ -3354,6 +3358,148 @@ function usePhotoBlob(blob) {
   d.photoBlob = blob;
   d.photo_url = URL.createObjectURL(blob);
 }
+
+/* ---- Photos from outside the app: dropped in, or pasted ----
+   On the floor the camera is the way in, but at a desk the photo is
+   usually already on screen — in WhatsApp, in an email from the supplier —
+   and saving it to Downloads just to pick it back out again is a chore.
+   Both routes land in the same cropper the camera does.
+
+   Pasting is the one to trust. Dragging out of WhatsApp Desktop hands over
+   a real file and works; dragging out of WhatsApp *Web* only offers a blob:
+   URL belonging to WhatsApp's own origin, which this page is not allowed to
+   read, and no amount of trying will change that. Copy the image and press
+   Ctrl+V and both of them work.
+
+   Dropping an image on a page normally navigates the browser to it, which
+   would throw away a half-filled item form. So a drop anywhere on the app is
+   swallowed whether or not there is anywhere to put it. */
+
+/** The item form is the only place a photo can land. Both halves of this
+    matter: closeSheet leaves the markup where it is and only drops the
+    'open' class, so the photo tile alone would still be sitting there long
+    after the form was dismissed — and a photo would land on a draft nobody
+    is editing any more. */
+function itemFormOpen() {
+  return sheetEl.classList.contains('open') && !!sheetEl.querySelector('[data-photo]');
+}
+
+/** Worth intercepting? Files covers a drag from Explorer or WhatsApp
+    Desktop; uri-list covers an image dragged off a web page. Plain text
+    dragged about inside the app carries neither, and is left alone. */
+function draggingAPhoto(dt) {
+  if (!dt || !dt.types) return false;
+  const types = Array.from(dt.types);
+  return types.indexOf('Files') !== -1 || types.indexOf('text/uri-list') !== -1;
+}
+
+/** An image out of a drop or a paste. Real files arrive on .files; a
+    clipboard image arrives only as an item, so both are worth a look. */
+function imageFromTransfer(dt) {
+  if (!dt) return null;
+  const files = dt.files;
+  if (files) {
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].type && files[i].type.indexOf('image/') === 0) return files[i];
+    }
+  }
+  if (dt.items) {
+    for (let i = 0; i < dt.items.length; i++) {
+      const it = dt.items[i];
+      if (it.kind === 'file' && it.type && it.type.indexOf('image/') === 0) {
+        const f = it.getAsFile();
+        if (f) return f;
+      }
+    }
+  }
+  return null;
+}
+
+/** Last resort for an image dragged off a web page: fetch it ourselves.
+    Only http(s) is worth trying — a blob: or data: URL from another origin
+    is unreadable here — and even then the site has to allow it. */
+async function fetchDraggedImage(url) {
+  if (!/^https?:/i.test(url)) return null;
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return (blob.type && blob.type.indexOf('image/') === 0) ? blob : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function photoFromOutside(blob) {
+  openCropSheet(blob, (out) => {
+    if (out) usePhotoBlob(out);
+    renderItemForm();
+  });
+}
+
+/** Only worth telling someone about drag and paste if they have a mouse. */
+function canDropPhotos() {
+  try { return window.matchMedia('(hover: hover) and (pointer: fine)').matches; }
+  catch (e) { return false; }
+}
+
+let dragDepth = 0;
+function paintDropTarget(on) {
+  const tile = sheetEl.querySelector('[data-photo]');
+  if (tile) tile.classList.toggle('dropping', on);
+}
+
+document.addEventListener('dragenter', (e) => {
+  if (!draggingAPhoto(e.dataTransfer)) return;
+  dragDepth++;
+  if (itemFormOpen()) paintDropTarget(true);
+});
+document.addEventListener('dragleave', (e) => {
+  if (!draggingAPhoto(e.dataTransfer)) return;
+  // dragenter on a child fires before dragleave on the parent, so count the
+  // nesting rather than clearing the highlight on the first leave.
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) paintDropTarget(false);
+});
+document.addEventListener('dragover', (e) => {
+  if (!draggingAPhoto(e.dataTransfer)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+document.addEventListener('drop', (e) => {
+  if (!draggingAPhoto(e.dataTransfer)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  paintDropTarget(false);
+
+  // A DataTransfer is only readable while the event is being handled, so
+  // take what is needed off it before anything is awaited.
+  const file = imageFromTransfer(e.dataTransfer);
+  const url = (e.dataTransfer.getData('text/uri-list') || '').split('\n')[0].trim();
+
+  if (!itemFormOpen()) {
+    toast('Open an item first, then drop the photo onto it');
+    return;
+  }
+  if (file) { photoFromOutside(file); return; }
+  if (!url) { toast('That did not come through as a picture', 'bad'); return; }
+
+  fetchDraggedImage(url).then(blob => {
+    if (blob) photoFromOutside(blob);
+    // The WhatsApp Web case, and any site that will not share its images.
+    else toast('Could not read that one — copy the image and press Ctrl+V instead', 'bad');
+  });
+});
+
+document.addEventListener('paste', (e) => {
+  if (!itemFormOpen()) return;
+  const file = imageFromTransfer(e.clipboardData);
+  // No image on the clipboard means this is an ordinary text paste into a
+  // field, which must be left alone.
+  if (!file) return;
+  e.preventDefault();
+  photoFromOutside(file);
+});
 
 async function saveItem() {
   const d = itemDraft;
