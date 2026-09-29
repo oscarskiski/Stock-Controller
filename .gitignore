@@ -20,3 +20,9 @@ Mobile parts inventory app.zip
 # Random photos that landed in this folder by accident
 *.jpeg
 *.jpg
+
+# Full data backups pulled from Supabase — never push these to a public repo
+backups/
+
+# A service_role key for backup.ps1 - a real secret, never commit it
+backup-key.txt
