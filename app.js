@@ -6,6 +6,18 @@
 
 const CFG = window.CONFIG || {};
 
+/* Which build is actually running, read off this file's own ?v= stamp.
+   Worth showing: when a deploy appears not to have arrived, the first thing
+   anyone needs to know is whether the browser is running the new code or a
+   cached old one, and there was previously no way to tell from the phone. */
+const ASSET_VERSION = (() => {
+  try {
+    const el = document.currentScript || document.querySelector('script[src*="app.js"]');
+    const m = el && /[?&]v=([^&]+)/.exec(el.getAttribute('src') || '');
+    return m ? m[1] : '?';
+  } catch (e) { return '?'; }
+})();
+
 /* ===================== Motion (springs) ===================== */
 class Spring {
   constructor(value, { dampingRatio = 1, response = 0.3 } = {}) {
@@ -1748,7 +1760,8 @@ function openSettingsSheet() {
       ? '<div class="field-group" style="margin-bottom:4px;"><div class="field-row" data-signout style="cursor:pointer;">' +
           '<span class="fname" style="color:var(--sys-red);">Sign out' + ((state.profile && state.profile.username) ? ' (' + escapeHtml(state.profile.username) + ')' : '') + '</span></div></div>'
       : '') +
-    '<div class="status-line">Yard Stock · v1.0<br>Add to Home Screen for a full-screen app.</div>' +
+    '<div class="status-line">Yard Stock · v1.0 · build ' + escapeHtml(ASSET_VERSION) +
+      '<br>Add to Home Screen for a full-screen app.</div>' +
     '<div class="sheet-actions"><button class="sheet-cancel" data-close type="button" style="flex:1;">Close</button></div>';
 
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
@@ -3437,10 +3450,17 @@ function photoFromOutside(blob) {
   });
 }
 
-/** Only worth telling someone about drag and paste if they have a mouse. */
+/** Only worth telling someone about drag and paste if they have a mouse.
+    'any-pointer' rather than 'pointer': on a touchscreen laptop the primary
+    pointer is the finger, so the plain query says coarse and the hint would
+    be hidden from someone sitting in front of a perfectly good mouse. And if
+    the browser cannot answer at all, say yes — a hint nobody can act on is a
+    far smaller problem than a feature nobody knows exists. */
 function canDropPhotos() {
-  try { return window.matchMedia('(hover: hover) and (pointer: fine)').matches; }
-  catch (e) { return false; }
+  try {
+    const m = window.matchMedia('(any-pointer: fine), (any-hover: hover)');
+    return m.media === 'not all' ? true : m.matches;
+  } catch (e) { return true; }
 }
 
 let dragDepth = 0;
@@ -3451,6 +3471,9 @@ function paintDropTarget(on) {
 
 document.addEventListener('dragenter', (e) => {
   if (!draggingAPhoto(e.dataTransfer)) return;
+  // Cancelling dragover alone is enough in Chrome, but the spec wants both
+  // and some setups will not register the drop target without it.
+  e.preventDefault();
   dragDepth++;
   if (itemFormOpen()) paintDropTarget(true);
 });
