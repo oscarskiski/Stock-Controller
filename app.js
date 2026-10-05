@@ -2398,7 +2398,11 @@ const KANBAN_TYPES = {
   internal:    { label: 'Internal KANBAN',    color: '#6B2E1F' },
   external:    { label: 'External KANBAN',    color: '#1E7B34' },
   manufacture: { label: 'Manufacture KANBAN', color: '#1F5FA8' },
-  plain:       { label: '',                   color: '#B0301F' }
+  plain:       { label: '',                   color: '#B0301F' },
+  // The item card's header takes a colour from the same picker. White by
+  // default, so it starts out looking like a plain printed label and Reset
+  // has somewhere sensible to go back to.
+  item:        { label: '',                   color: '#FFFFFF' }
 };
 let kanbanType = localStorage.getItem('ys_kanban_type') || 'external';
 
@@ -2443,9 +2447,14 @@ function itemCardHtml(p) {
 
   const name = String(p.name || '');
   const size = name.length > 40 ? ' icard-head-xs' : name.length > 24 ? ' icard-head-sm' : '';
+  // Same picker as the Kanban banner, and the same contrast rule: a pale
+  // header takes black text, a dark one white, so it stays readable whatever
+  // is chosen. White is the default and prints as a plain label.
+  const bg = kanbanColor(ITEM_CARD);
 
   return '<div class="icard' + (itemCardLarge ? ' icard-lg' : '') + '">' +
-    '<div class="icard-head' + size + '">' + escapeHtml(name) + '</div>' +
+    '<div class="icard-head' + size + '" style="background:' + bg + ';color:' + bannerInk(bg) + '">' +
+      escapeHtml(name) + '</div>' +
     '<div class="icard-body">' +
       '<div class="icard-qr">' + (qrSvg || '<span class="icard-qr-fallback">QR</span>') + '</div>' +
       '<div class="icard-pic">' +
@@ -2520,7 +2529,9 @@ function openPrintCardSheet(p) {
 
 /* A handful of presets covers the usual set; the swatch beside them is a
    native colour picker for anything else. Both save per card type. */
-const KANBAN_SWATCHES = ['#B0301F', '#6B2E1F', '#1E7B34', '#1F5FA8', '#C9782A', '#5B2D82', '#2B2B2B'];
+/* White last: it is the item card's own default and the way back to a plain
+   uncoloured header, which the preset row otherwise had no way of offering. */
+const KANBAN_SWATCHES = ['#B0301F', '#6B2E1F', '#1E7B34', '#1F5FA8', '#C9782A', '#5B2D82', '#2B2B2B', '#FFFFFF'];
 
 function renderPrintCardSheet(p) {
   const types = [['internal', 'Internal'], ['external', 'External'], ['manufacture', 'Manufacture'], ['plain', 'Plain'], [ITEM_CARD, 'Item']];
@@ -2537,22 +2548,23 @@ function renderPrintCardSheet(p) {
       types.map(([k, label]) =>
         '<button class="seg-btn ' + (kanbanType === k ? 'active' : '') + '" data-ktype="' + k + '" type="button">' + label + '</button>').join('') +
     '</div>' +
-    // An item card has no banner to colour, so that row gives way to the
-    // size choice — the only thing there is to pick on one.
+    // The size choice only means anything on an item card; the colour row
+    // serves both, colouring the Kanban banner or the item card's header.
     (item
       ? '<div class="segmented no-print" style="margin-top:8px;">' +
           '<button class="seg-btn ' + (itemCardLarge ? '' : 'active') + '" data-isize="std" type="button">Standard 92 &times; 62</button>' +
           '<button class="seg-btn ' + (itemCardLarge ? 'active' : '') + '" data-isize="lg" type="button">Large 184 &times; 124</button>' +
         '</div>'
-      : '<div class="kcolor-row no-print">' +
-          '<span class="kcolor-label">Label colour</span>' +
-          KANBAN_SWATCHES.map(c =>
-            '<button class="kcolor-dot ' + (c.toLowerCase() === cur.toLowerCase() ? 'active' : '') + '" data-kswatch="' + c + '" style="background:' + c + '" type="button" title="' + c + '"></button>').join('') +
-          '<label class="kcolor-custom" title="Pick any colour">' +
-            '<input type="color" data-kcolor value="' + cur + '">' +
-          '</label>' +
-          (isDefault ? '' : '<button class="kcolor-reset" data-kreset type="button">Reset</button>') +
-        '</div>') +
+      : '') +
+    '<div class="kcolor-row no-print">' +
+      '<span class="kcolor-label">' + (item ? 'Header colour' : 'Label colour') + '</span>' +
+      KANBAN_SWATCHES.map(c =>
+        '<button class="kcolor-dot ' + (c.toLowerCase() === cur.toLowerCase() ? 'active' : '') + '" data-kswatch="' + c + '" style="background:' + c + '" type="button" title="' + c + '"></button>').join('') +
+      '<label class="kcolor-custom" title="Pick any colour">' +
+        '<input type="color" data-kcolor value="' + cur + '">' +
+      '</label>' +
+      (isDefault ? '' : '<button class="kcolor-reset" data-kreset type="button">Reset</button>') +
+    '</div>' +
     '<div class="print-area">' + kanbanCardHtml(p) + '</div>' +
     '<div class="sheet-actions no-print">' +
       '<button class="sheet-cancel" data-close type="button">Close</button>' +
@@ -2592,7 +2604,7 @@ function renderPrintCardSheet(p) {
 }
 
 function paintBanner(hex) {
-  const head = sheetEl.querySelector('.kcard-head');
+  const head = sheetEl.querySelector('.kcard-head, .icard-head');
   if (!head) return;
   head.style.background = hex;
   head.style.color = bannerInk(hex);
