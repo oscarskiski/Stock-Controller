@@ -2406,11 +2406,22 @@ const KANBAN_TYPES = {
 };
 let kanbanType = localStorage.getItem('ys_kanban_type') || 'external';
 
-/* The item card is not a Kanban signal — no re-order quantity, no supplier,
-   nothing to action. Just the name, the code and the picture, for labelling
-   a bin or a shelf. It rides in the same picker as a fifth option. */
+/* Three different things can be printed about an item, and they are not
+   variants of each other: a Kanban signal card, a plain label card, and an
+   A4 tally sheet. What to print is one choice; the options under it belong
+   to whichever was picked. Cramming all of them into one row of buttons
+   stopped fitting on a phone at five. */
 const ITEM_CARD = 'item';
-function isItemCard(t) { return (t || kanbanType) === ITEM_CARD; }
+let printKind = localStorage.getItem('ys_print_kind') || 'kanban';
+/* The item card used to live in the Kanban type list, so anyone who left it
+   selected has that stored as their Kanban type. Move them across once. */
+if (kanbanType === ITEM_CARD) {
+  printKind = ITEM_CARD;
+  kanbanType = 'external';
+  localStorage.setItem('ys_kanban_type', kanbanType);
+  localStorage.setItem('ys_print_kind', printKind);
+}
+function isItemCard() { return printKind === ITEM_CARD; }
 let itemCardLarge = localStorage.getItem('ys_item_card_large') === '1';
 
 /* Per-type banner colour the user has picked, keyed by type. Anything not in
@@ -2421,6 +2432,13 @@ let kanbanColors = (() => {
 })();
 function kanbanColor(type) {
   return kanbanColors[type] || (KANBAN_TYPES[type] || KANBAN_TYPES.external).color;
+}
+/** What the picker is colouring right now: the item card's header, or the
+    banner of the selected Kanban subtype. These were the same key back when
+    the item card sat in the Kanban type list; they are not any more, and
+    writing to the wrong one silently recolours a card nobody was looking at. */
+function currentColourKey() {
+  return isItemCard() ? ITEM_CARD : kanbanType;
 }
 function setKanbanColor(type, hex) {
   kanbanColors[type] = hex;
@@ -2466,8 +2484,64 @@ function itemCardHtml(p) {
   '</div>';
 }
 
+/* The paper tally sheet that lives on the rack: photo, name, where the item
+   is kept, then ruled lines for writing movements by hand. For the times
+   somebody has both hands full and the phone stays in a pocket — the app
+   catches up later from what is written here.
+
+   26 rows at ~7.5mm fills A4 under the header. 28 also fitted, but only with
+   3mm to spare — a name that wrapped, or a fourth location, tipped the whole
+   form onto a second page carrying nothing but blank lines. Two rows buys
+   enough headroom for the header to grow. */
+const BOOKOUT_ROWS = 26;
+
+function bookOutSheetHtml(p) {
+  const notes = parseLocNotes(p.location_notes);
+  const locs = sortLocs(p.location);
+  const name = String(p.name || '');
+  // Long names step down rather than wrapping onto a third line and pushing
+  // the table over the page break.
+  const nameSize = name.length > 44 ? ' bsheet-name-xs' : name.length > 26 ? ' bsheet-name-sm' : '';
+
+  const where = locs.length
+    ? locs.map(c =>
+        '<div class="bsheet-loc">' +
+          '<span class="bsheet-loc-code">' + escapeHtml(c) + '</span>' +
+          (notes[c] ? '<span class="bsheet-loc-note">' + escapeHtml(notes[c]) + '</span>' : '') +
+        '</div>').join('')
+    : '<div class="bsheet-loc"><span class="bsheet-loc-none">No location recorded</span></div>';
+
+  const rows = new Array(BOOKOUT_ROWS).fill(
+    '<tr><td></td><td></td><td></td><td></td><td></td></tr>').join('');
+
+  return '<div class="bsheet">' +
+    '<div class="bsheet-head">' +
+      '<div class="bsheet-photo">' +
+        (p.photo_url
+          ? '<img src="' + escapeHtml(p.photo_url) + '" alt="">'
+          : '<span class="bsheet-photo-ph">no photo</span>') +
+      '</div>' +
+      '<div class="bsheet-id">' +
+        '<div class="bsheet-name' + nameSize + '">' + escapeHtml(name) + '</div>' +
+        '<div class="bsheet-where">' +
+          '<div class="bsheet-where-label">Rack location</div>' + where +
+        '</div>' +
+        '<div class="bsheet-sub">' +
+          (p.code ? '<span>SKU <strong>' + escapeHtml(p.code) + '</strong></span>' : '') +
+          '<span>Counted in <strong>' + escapeHtml(p.unit || 'ea') + '</strong></span>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+    '<table class="bsheet-table">' +
+      '<thead><tr>' +
+        '<th>Action</th><th>Who / Name</th><th>IN / OUT<br>Movement</th><th>Total</th><th>Date</th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table>' +
+  '</div>';
+}
+
 function kanbanCardHtml(p) {
-  if (isItemCard()) return itemCardHtml(p);
   const t = KANBAN_TYPES[kanbanType] || KANBAN_TYPES.external;
   let qrSvg = '';
   try { qrSvg = QR.toSvg(itemDeepLink(p), { dark: '#000' }); } catch (e) { qrSvg = ''; }
@@ -2522,6 +2596,13 @@ function kanbanCardHtml(p) {
   '</div>';
 }
 
+/** Whichever of the three the picker is on. */
+function printableHtml(p) {
+  if (printKind === ITEM_CARD) return itemCardHtml(p);
+  if (printKind === 'bookout') return bookOutSheetHtml(p);
+  return kanbanCardHtml(p);
+}
+
 function openPrintCardSheet(p) {
   renderPrintCardSheet(p);
   openSheet();
@@ -2534,43 +2615,67 @@ function openPrintCardSheet(p) {
 const KANBAN_SWATCHES = ['#B0301F', '#6B2E1F', '#1E7B34', '#1F5FA8', '#C9782A', '#5B2D82', '#2B2B2B', '#FFFFFF'];
 
 function renderPrintCardSheet(p) {
-  const types = [['internal', 'Internal'], ['external', 'External'], ['manufacture', 'Manufacture'], ['plain', 'Plain'], [ITEM_CARD, 'Item']];
-  const cur = kanbanColor(kanbanType);
-  const isDefault = !kanbanColors[kanbanType];
+  const kinds = [['kanban', 'Kanban card'], [ITEM_CARD, 'Item card'], ['bookout', 'Book-out sheet']];
+  const types = [['internal', 'Internal'], ['external', 'External'], ['manufacture', 'Manufacture'], ['plain', 'Plain']];
   const item = isItemCard();
-  const dims = item ? (itemCardLarge ? '184 &times; 124mm' : '92 &times; 62mm') : '92 &times; 62mm';
+  const bookout = printKind === 'bookout';
+  // The colour is kept against whatever it colours — the Kanban subtype, or
+  // the item card — so changing one never disturbs the other.
+  const colourKey = item ? ITEM_CARD : kanbanType;
+  const cur = kanbanColor(colourKey);
+  const isDefault = !kanbanColors[colourKey];
+
+  const title = bookout ? 'Print book-out sheet' : item ? 'Print item card' : 'Print Kanban card';
+  const sub = bookout
+    ? 'A4. Ruled lines for writing movements by hand at the rack.'
+    : (item ? (itemCardLarge ? '184 &times; 124mm' : '92 &times; 62mm') : '92 &times; 62mm') +
+      '. Turn off "Fit to page" / "Scale" in the print dialog so it prints true size.';
 
   sheetEl.innerHTML =
     '<div class="sheet-handle no-print"></div>' +
-    '<div class="sheet-title no-print">' + (item ? 'Print item card' : 'Print Kanban card') + '</div>' +
-    '<div class="sheet-sub no-print">' + dims + '. Turn off "Fit to page" / "Scale" in the print dialog so it prints true size.</div>' +
+    '<div class="sheet-title no-print">' + title + '</div>' +
+    '<div class="sheet-sub no-print">' + sub + '</div>' +
     '<div class="segmented no-print">' +
-      types.map(([k, label]) =>
-        '<button class="seg-btn ' + (kanbanType === k ? 'active' : '') + '" data-ktype="' + k + '" type="button">' + label + '</button>').join('') +
+      kinds.map(([k, label]) =>
+        '<button class="seg-btn ' + (printKind === k ? 'active' : '') + '" data-pkind="' + k + '" type="button">' + label + '</button>').join('') +
     '</div>' +
-    // The size choice only means anything on an item card; the colour row
-    // serves both, colouring the Kanban banner or the item card's header.
+    // Whatever the chosen kind actually has to choose. A book-out sheet has
+    // nothing: it is one fixed A4 form.
+    (printKind === 'kanban'
+      ? '<div class="segmented no-print">' +
+          types.map(([k, label]) =>
+            '<button class="seg-btn ' + (kanbanType === k ? 'active' : '') + '" data-ktype="' + k + '" type="button">' + label + '</button>').join('') +
+        '</div>'
+      : '') +
     (item
-      ? '<div class="segmented no-print" style="margin-top:8px;">' +
+      ? '<div class="segmented no-print">' +
           '<button class="seg-btn ' + (itemCardLarge ? '' : 'active') + '" data-isize="std" type="button">Standard 92 &times; 62</button>' +
           '<button class="seg-btn ' + (itemCardLarge ? 'active' : '') + '" data-isize="lg" type="button">Large 184 &times; 124</button>' +
         '</div>'
       : '') +
-    '<div class="kcolor-row no-print">' +
-      '<span class="kcolor-label">' + (item ? 'Header colour' : 'Label colour') + '</span>' +
-      KANBAN_SWATCHES.map(c =>
-        '<button class="kcolor-dot ' + (c.toLowerCase() === cur.toLowerCase() ? 'active' : '') + '" data-kswatch="' + c + '" style="background:' + c + '" type="button" title="' + c + '"></button>').join('') +
-      '<label class="kcolor-custom" title="Pick any colour">' +
-        '<input type="color" data-kcolor value="' + cur + '">' +
-      '</label>' +
-      (isDefault ? '' : '<button class="kcolor-reset" data-kreset type="button">Reset</button>') +
+    (bookout ? '' :
+      '<div class="kcolor-row no-print">' +
+        '<span class="kcolor-label">' + (item ? 'Header colour' : 'Label colour') + '</span>' +
+        KANBAN_SWATCHES.map(c =>
+          '<button class="kcolor-dot ' + (c.toLowerCase() === cur.toLowerCase() ? 'active' : '') + '" data-kswatch="' + c + '" style="background:' + c + '" type="button" title="' + c + '"></button>').join('') +
+        '<label class="kcolor-custom" title="Pick any colour">' +
+          '<input type="color" data-kcolor value="' + cur + '">' +
+        '</label>' +
+        (isDefault ? '' : '<button class="kcolor-reset" data-kreset type="button">Reset</button>') +
+      '</div>') +
+    '<div class="print-area' + (bookout ? ' print-area-page' : '') + '">' +
+      (bookout ? '<div class="page-scale" id="pageScale">' + printableHtml(p) + '</div>' : printableHtml(p)) +
     '</div>' +
-    '<div class="print-area">' + kanbanCardHtml(p) + '</div>' +
     '<div class="sheet-actions no-print">' +
       '<button class="sheet-cancel" data-close type="button">Close</button>' +
       '<button class="sheet-save" data-doprint type="button">' + I.print + ' Print</button>' +
     '</div>';
 
+  sheetEl.querySelectorAll('[data-pkind]').forEach(b => b.addEventListener('click', () => {
+    printKind = b.getAttribute('data-pkind');
+    localStorage.setItem('ys_print_kind', printKind);
+    renderPrintCardSheet(p);
+  }));
   sheetEl.querySelectorAll('[data-ktype]').forEach(b => b.addEventListener('click', () => {
     kanbanType = b.getAttribute('data-ktype');
     localStorage.setItem('ys_kanban_type', kanbanType);
@@ -2582,7 +2687,7 @@ function renderPrintCardSheet(p) {
     renderPrintCardSheet(p);
   }));
   sheetEl.querySelectorAll('[data-kswatch]').forEach(b => b.addEventListener('click', () => {
-    setKanbanColor(kanbanType, b.getAttribute('data-kswatch'));
+    setKanbanColor(currentColourKey(), b.getAttribute('data-kswatch'));
     renderPrintCardSheet(p);
   }));
   // Absent on an item card, which has no banner to colour.
@@ -2591,16 +2696,37 @@ function renderPrintCardSheet(p) {
     // Repaint the banner live as the picker is dragged, but only re-render the
     // sheet once it settles — a re-render mid-drag closes the colour picker.
     picker.addEventListener('input', () => paintBanner(picker.value));
-    picker.addEventListener('change', () => { setKanbanColor(kanbanType, picker.value); renderPrintCardSheet(p); });
+    picker.addEventListener('change', () => { setKanbanColor(currentColourKey(), picker.value); renderPrintCardSheet(p); });
   }
   const reset = sheetEl.querySelector('[data-kreset]');
   if (reset) reset.addEventListener('click', () => {
-    delete kanbanColors[kanbanType];
+    delete kanbanColors[currentColourKey()];
     localStorage.setItem('ys_kanban_colors', JSON.stringify(kanbanColors));
     renderPrintCardSheet(p);
   });
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
   sheetEl.querySelector('[data-doprint]').addEventListener('click', () => printKanbanCard(p));
+  fitPagePreview();
+}
+
+/** An A4 sheet is far wider than the panel it is previewed in, so shrink it
+    to fit rather than leave it scrolling sideways — the point of a preview is
+    seeing the whole form at once. Printing is untouched; this scales only the
+    copy on screen. The wrapper takes the scaled height too, or the layout
+    would still reserve the full A4 and leave a long gap underneath. */
+function fitPagePreview() {
+  const box = sheetEl.querySelector('.print-area-page');
+  const page = $('pageScale');
+  if (!box || !page) return;
+  page.style.transform = 'none';
+  box.style.height = '';
+  const natural = page.getBoundingClientRect();
+  const room = box.clientWidth;
+  if (!natural.width || !room) return;
+  const scale = Math.min(1, room / natural.width);
+  page.style.transformOrigin = 'top left';
+  page.style.transform = 'scale(' + scale + ')';
+  box.style.height = (natural.height * scale) + 'px';
 }
 
 function paintBanner(hex) {
@@ -2619,7 +2745,7 @@ function printKanbanCard(p) {
     root.id = 'printRoot';
     document.body.appendChild(root);
   }
-  root.innerHTML = kanbanCardHtml(p);
+  root.innerHTML = printableHtml(p);
   window.print();
 }
 

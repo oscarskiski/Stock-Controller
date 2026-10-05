@@ -630,6 +630,55 @@ img { display: block; }
    flex-grow so the 4.5mm left over is shared out between them rather
    than left as a gap at the foot of the stack. */
 .print-area { display: flex; justify-content: center; padding: 8px 0 4px; overflow-x: auto; }
+/* An A4 preview is scaled down to fit by fitPagePreview, which needs a plain
+   block to measure and scale inside rather than a centring flex row. */
+.print-area-page { display: block; overflow: hidden; }
+.page-scale { width: 190mm; }
+
+/* ---------- Book-out sheet (A4) ----------
+   The paper fallback: it hangs at the rack and gets written on in pencil
+   when nobody is reaching for a phone. Black on white with real rules, like
+   the picking list — nothing here is dark-themed. */
+.bsheet { width: 100%; color: #000; font-family: var(--sans); }
+.bsheet-head { display: flex; gap: 6mm; align-items: stretch; margin-bottom: 5mm; }
+.bsheet-photo {
+  width: 46mm; height: 46mm; flex: 0 0 46mm; border: 0.5mm solid #000;
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.bsheet-photo img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.bsheet-photo-ph { color: #999; font-size: 9pt; }
+.bsheet-id { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* The band the item name sits in, as on the sheets this replaces. */
+.bsheet-name {
+  background: #FFF0A6; font-size: 20pt; font-weight: 800; line-height: 1.25;
+  padding: 2mm 3mm; margin-bottom: 3mm; word-wrap: break-word;
+}
+.bsheet-name-sm { font-size: 15pt; }
+.bsheet-name-xs { font-size: 12pt; }
+.bsheet-where { border: 0.35mm solid #000; padding: 2mm 3mm; margin-bottom: 3mm; }
+.bsheet-where-label {
+  font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.06em; color: #444; margin-bottom: 1mm;
+}
+.bsheet-loc { display: flex; align-items: baseline; gap: 3mm; margin-top: 0.8mm; }
+.bsheet-loc-code {
+  font-size: 15pt; font-weight: 800; font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
+}
+.bsheet-loc-note { font-size: 9.5pt; }
+.bsheet-loc-none { font-size: 11pt; color: #666; }
+.bsheet-sub { display: flex; gap: 6mm; font-size: 9.5pt; margin-top: auto; }
+
+.bsheet-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.bsheet-table th, .bsheet-table td { border: 0.35mm solid #000; }
+.bsheet-table th {
+  font-size: 10.5pt; font-weight: 700; text-align: center; padding: 1.5mm 1mm; line-height: 1.2;
+}
+/* Padding, not height: `height` on an empty cell is only a minimum and the
+   row collapses anyway, which left a third of the page blank. Padding always
+   contributes, so 3.6mm each side gives a dependable ~7.5mm line - enough to
+   write a name in, and 28 of them fill A4 under the header without spilling
+   onto a second page carrying nothing but blank lines. */
+.bsheet-table td { padding: 3.6mm 1.5mm; }
+
 .kcard {
   width: 92mm; height: 62mm; border: 0.35mm solid #000; background: #fff; color: #000;
   display: flex; flex-direction: column; overflow: hidden; font-family: var(--sans); flex-shrink: 0;
@@ -800,6 +849,11 @@ img { display: block; }
      inside A4 portrait's printable width with this 10mm margin. */
   @page { margin: 10mm; }
   #printRoot .kcard, #printRoot .icard { page-break-inside: avoid; break-inside: avoid; }
+
+  /* The book-out sheet is one A4 page: keep its header with the table and
+     never let a ruled line break across pages. */
+  #printRoot .bsheet-head { page-break-inside: avoid; break-inside: avoid; }
+  #printRoot .bsheet-table tr { page-break-inside: avoid; break-inside: avoid; }
 
   /* A picking list can run to several pages: keep the column headings on
      each one, never split a line across a page break, and keep the
