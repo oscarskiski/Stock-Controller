@@ -163,6 +163,43 @@ function locChipsHtml(v) {
   return sortLocs(v).map(c => '<span class="meta-chip loc">' + escapeHtml(c) + '</span>').join('');
 }
 
+/* A note against each storage location — "the long ones", "offcuts in the
+   blue bin" — for when one item sits in more than one place and the codes
+   alone do not say which is which.
+
+   These live in their own products.location_notes column as JSON keyed by
+   location code, deliberately not folded into the location string: that
+   string is split on commas and parsed as codes by the Racks screen, the
+   search, the sort order and the printed card, and a note with a comma in
+   it would quietly break all of them. */
+function parseLocNotes(v) {
+  if (!v) return {};
+  if (typeof v === 'object') return v;
+  try {
+    const o = JSON.parse(v);
+    return (o && typeof o === 'object' && !Array.isArray(o)) ? o : {};
+  } catch (e) { return {}; }
+}
+/** Only notes for locations the item still has, and only non-empty ones;
+    null rather than '{}' so an item with no notes stores nothing. */
+function packLocNotes(notes, locs) {
+  const out = {};
+  locList(locs).forEach(c => {
+    const t = String((notes || {})[c] || '').trim();
+    if (t) out[c] = t;
+  });
+  return Object.keys(out).length ? JSON.stringify(out) : null;
+}
+/** "A1R1 — the long ones, A2R3" — codes in walking order, each with its
+    note where it has one. */
+function locLinesHtml(product) {
+  const notes = parseLocNotes(product.location_notes);
+  return sortLocs(product.location).map(c =>
+    '<div class="loc-line"><span class="loc-line-code">' + escapeHtml(c) + '</span>' +
+    (notes[c] ? '<span class="loc-line-note">' + escapeHtml(notes[c]) + '</span>' : '') +
+    '</div>').join('');
+}
+
 const CATEGORIES = ['Parts', 'Assembled', 'Raw materials'];
 const UNITS = ['ea', 'set', 'pair', 'box', 'pack', 'sheet', 'roll', 'm', 'm²', 'kg', 'litre'];
 const LEAD_UNITS = ['days', 'wks', 'months'];
@@ -2304,7 +2341,13 @@ function renderProductDetail(p) {
     '</div>' +
     '<div class="field-group" style="margin-bottom:12px;">' +
       '<div class="field-row"><span class="fname">Owner</span><span class="field-val">' + (clientNameOf(p) ? escapeHtml(clientNameOf(p)) + ' (client stock)' : 'Ours') + '</span></div>' +
-      '<div class="field-row"><span class="fname">' + (locList(p.location).length > 1 ? 'Locations' : 'Location') + '</span><span class="field-val" style="color:var(--sys-teal);font-weight:700;font-variant-numeric:tabular-nums;">' + orDash(formatLocs(p.location)) + '</span></div>' +
+      // With notes against the locations the codes go on their own lines, so
+      // each note sits with the place it describes; without any, the old
+      // single-line "A1R1, A2R3" is tidier and stays.
+      (Object.keys(parseLocNotes(p.location_notes)).length
+        ? '<div class="field-row field-row-stack"><span class="fname">' + (locList(p.location).length > 1 ? 'Locations' : 'Location') + '</span>' +
+            '<div class="loc-lines">' + locLinesHtml(p) + '</div></div>'
+        : '<div class="field-row"><span class="fname">' + (locList(p.location).length > 1 ? 'Locations' : 'Location') + '</span><span class="field-val" style="color:var(--sys-teal);font-weight:700;font-variant-numeric:tabular-nums;">' + orDash(formatLocs(p.location)) + '</span></div>') +
       '<div class="field-row"><span class="fname">SKU</span><span class="field-val" style="font-family:ui-monospace,Menlo,monospace;">' + orDash(p.code) + '</span></div>' +
       '<div class="field-row"><span class="fname">Group / type</span><span class="field-val">' + orDash(p.group_name) + ' · ' + orDash(p.category) + '</span></div>' +
       '<div class="field-row"><span class="fname">Cost (budget)</span><span class="field-val">' + orDash(p.cost) + '</span></div>' +
@@ -2796,6 +2839,10 @@ function openItemForm(existing) {
     category: p.category || 'Parts', group_name: p.group_name || '',
     unit, qty: p.id ? num(p.qty) : 0, min_qty: num(p.min_qty) || '', cost: parseMoney(p.cost),
     locs: sortLocs(p.location),
+    locNotes: parseLocNotes(p.location_notes),
+    // What the count was when the form opened, so Save can tell whether it
+    // was touched and by how much.
+    qty0: p.id ? num(p.qty) : 0,
     // The letter the picker starts on: this item's own, so adding a neighbouring
     // location is a two-number job.
     locLetter: (parseLoc(firstLoc(p.location)) || {}).letter || 'A',
@@ -2909,25 +2956,24 @@ function renderItemForm() {
 
     '<div class="form-section-label">Group &amp; category</div>' +
     '<div class="form-card">' + formFieldHtml('fGroup', 'Group', d.group_name, { placeholder: 'e.g. Timber' }) + '</div>' +
-    (groups.length ? '<div class="chip-wrap">' + groups.map(g => '<button class="pill-btn pill-sm" data-setgroup="' + escapeHtml(g) + '" type="button">' + escapeHtml(g) + '</button>').join('') + '</div>' : '') +
+    '<div class="suggest-wrap" id="groupSuggest">' + groupSuggestHtml(groups, d.group_name) + '</div>' +
     '<div class="pill-grid" style="margin-top:6px;">' + CATEGORIES.map(c =>
       '<button class="pill-btn ' + (d.category === c ? 'active' : '') + '" data-pcat="' + escapeHtml(c) + '" type="button">' + c + '</button>').join('') + '</div>' +
 
     '<div class="form-section-label">Stock levels</div>' +
     '<div class="form-card">' +
       '<div class="form-field-pair">' +
-        (editing
-          ? '<div class="form-field"><div class="ff-label">Current qty</div><div class="ff-readonly">' + fmtQty(d.qty) + ' ' + escapeHtml(d.unit) + ' · use Set count to change</div></div>'
-          : formFieldHtml('fQty', 'Starting qty', d.qty, { type: 'number', inputmode: 'decimal' })) +
+        formFieldHtml('fQty', editing ? 'Current qty' : 'Starting qty', d.qty, { type: 'number', inputmode: 'decimal' }) +
         '<label class="form-field"><div class="ff-label">Unit</div><select id="fUnit" data-ff="fUnit">' + UNITS.map(u => '<option value="' + u + '" ' + (d.unit === u ? 'selected' : '') + '>' + u + '</option>').join('') + '</select></label>' +
       '</div>' +
+      (editing ? '<div class="form-hint">Changing the count here is recorded in the log as a stock correction, the same as Set count.</div>' : '') +
       formFieldHtml('fMin', 'Reorder qty (min stock)', d.min_qty, { type: 'number', inputmode: 'decimal', placeholder: 'Warn when stock drops below this' }) +
       moneyFieldHtml('fCost', 'Cost (budget price)', d.cost) +
     '</div>' +
 
     '<div class="form-section-label">Location</div>' +
     '<div class="locpick">' +
-      '<div class="loc-chips" id="locChips">' + locEditChipsHtml(d.locs) + '</div>' +
+      '<div class="loc-chips" id="locChips">' + locEditChipsHtml(d.locs, d.locNotes) + '</div>' +
       // Laid out the way the code reads — letter, number, R, number — so the
       // format explains itself without a label on every box.
       '<div class="locpick-row">' +
@@ -3004,7 +3050,7 @@ function renderItemForm() {
     const hint = $('clientHint');
     if (hint) hint.textContent = clientHintText(d);
   }));
-  sheetEl.querySelectorAll('[data-setgroup]').forEach(b => b.addEventListener('click', () => { d.group_name = b.getAttribute('data-setgroup'); $('fGroup').value = d.group_name; }));
+  wireGroupSuggest(d, groups);
   sheetEl.querySelectorAll('[data-dormant]').forEach(b => b.addEventListener('click', () => {
     d.dormant = b.getAttribute('data-dormant') === '1';
     sheetEl.querySelectorAll('[data-dormant]').forEach(x => x.classList.toggle('active', (x.getAttribute('data-dormant') === '1') === d.dormant));
@@ -3018,13 +3064,59 @@ function renderItemForm() {
   if (del) del.addEventListener('click', deleteItem);
 }
 
-function locEditChipsHtml(locs) {
+/* The groups already in use, offered under the Group box. These were styled
+   exactly like the Parts / Assembled / Raw materials pills directly beneath
+   them, so they read as another row of categories rather than as "tap to
+   fill this in" — hence the heading and the separate look. Typing narrows
+   the list, which is what makes it useful once there are more than a few. */
+function groupSuggestHtml(groups, typed) {
+  const q = String(typed || '').trim().toLowerCase();
+  const shown = q
+    ? groups.filter(g => g.toLowerCase().indexOf(q) !== -1 && g.toLowerCase() !== q)
+    : groups;
+  if (!shown.length) return '';
+  return '<div class="suggest-label">Groups you have used — tap to fill in</div>' +
+    '<div class="suggest-chips">' +
+      shown.map(g => '<button class="suggest-chip" data-setgroup="' + escapeHtml(g) + '" type="button">' +
+        escapeHtml(g) + '</button>').join('') +
+    '</div>';
+}
+
+/** Redrawn as they type, so only the suggestion box is rebuilt — rebuilding
+    the form would drop the keyboard and jump back to the top of the sheet. */
+function wireGroupSuggest(d, groups) {
+  const box = $('groupSuggest'), input = $('fGroup');
+  if (!box || !input) return;
+  const wire = () => box.querySelectorAll('[data-setgroup]').forEach(b =>
+    b.addEventListener('click', () => {
+      d.group_name = b.getAttribute('data-setgroup');
+      input.value = d.group_name;
+      box.innerHTML = groupSuggestHtml(groups, d.group_name);
+      wire();
+    }));
+  input.addEventListener('input', () => {
+    box.innerHTML = groupSuggestHtml(groups, input.value);
+    wire();
+  });
+  wire();
+}
+
+/* One row per location: the code, a note box, and the remove button. A row
+   rather than a chip because the note needs somewhere to live, and because
+   with several locations it has to be obvious which note belongs to which. */
+function locEditChipsHtml(locs, notes) {
   if (!locs.length) return '<span class="loc-none">No location yet</span>';
-  return locs.map(c =>
-    '<span class="loc-chip' + (parseLoc(c) ? '' : ' old') + '"' + (parseLoc(c) ? '' : ' title="Old format — remove it and add the A1R1 version"') + '>' +
-      escapeHtml(c) +
-      '<button type="button" data-locdel="' + escapeHtml(c) + '" aria-label="Remove ' + escapeHtml(c) + '">×</button>' +
-    '</span>').join('');
+  notes = notes || {};
+  return locs.map(c => {
+    const bad = !parseLoc(c);
+    return '<div class="loc-row">' +
+      '<span class="loc-chip' + (bad ? ' old' : '') + '"' +
+        (bad ? ' title="Old format — remove it and add the A1R1 version"' : '') + '>' + escapeHtml(c) + '</span>' +
+      '<input class="loc-note" type="text" data-locnote="' + escapeHtml(c) + '"' +
+        ' value="' + escapeHtml(notes[c] || '') + '" placeholder="What is kept here? (optional)">' +
+      '<button type="button" class="loc-del" data-locdel="' + escapeHtml(c) + '" aria-label="Remove ' + escapeHtml(c) + '">×</button>' +
+    '</div>';
+  }).join('');
 }
 
 /** Only the chips and the hint are redrawn, never the whole form: this sits
@@ -3035,12 +3127,21 @@ function wireLocPicker(d) {
   const letter = $('lLetter'), n = $('lNum'), rack = $('lRackNo');
 
   const say = (msg, bad) => { hint.textContent = msg; hint.classList.toggle('bad', !!bad); };
-  const redraw = () => { chips.innerHTML = locEditChipsHtml(d.locs); wireChips(); };
-  const wireChips = () => chips.querySelectorAll('[data-locdel]').forEach(b => b.addEventListener('click', () => {
-    d.locs = d.locs.filter(x => x !== b.getAttribute('data-locdel'));
-    redraw();
-    say(d.locs.length ? 'Removed.' : 'For example A1R1. Add more than one if it spans several.');
-  }));
+  const redraw = () => { chips.innerHTML = locEditChipsHtml(d.locs, d.locNotes); wireChips(); };
+  const wireChips = () => {
+    chips.querySelectorAll('[data-locdel]').forEach(b => b.addEventListener('click', () => {
+      const code = b.getAttribute('data-locdel');
+      d.locs = d.locs.filter(x => x !== code);
+      delete d.locNotes[code];
+      redraw();
+      say(d.locs.length ? 'Removed.' : 'For example A1R1. Add more than one if it spans several.');
+    }));
+    // Typing a note only updates the draft — no redraw, or the box being
+    // typed into would be replaced underneath the keyboard on every letter.
+    chips.querySelectorAll('[data-locnote]').forEach(i => i.addEventListener('input', () => {
+      d.locNotes[i.getAttribute('data-locnote')] = i.value;
+    }));
+  };
 
   const add = () => {
     const code = buildLoc(letter.value, n.value, rack.value);
@@ -3529,6 +3630,7 @@ async function saveItem() {
   takePendingLoc(d);
   d.name = ($('fName').value || '').trim();
   if (!d.name) { $('fName').focus(); toast('Give it a name first'); return; }
+  if (num(d.qty) < 0) { $('fQty').focus(); toast('The count cannot be less than zero'); return; }
 
   const btn = sheetEl.querySelector('[data-save]');
   btn.disabled = true; btn.textContent = 'Saving…';
@@ -3542,7 +3644,9 @@ async function saveItem() {
     const payload = {
       name: d.name, code: (d.code || '').trim(), notes: (d.notes || '').trim(),
       category: d.category, group_name: (d.group_name || '').trim() || null,
-      location: formatLocs(d.locs) || null, unit: d.unit,
+      location: formatLocs(d.locs) || null,
+      location_notes: packLocNotes(d.locNotes, d.locs),
+      unit: d.unit,
       min_qty: num(d.min_qty), cost: formatMoney(d.cost),
       bulk_location: (d.bulk_location || '').trim() || null,
       place_of_use: (d.place_of_use || '').trim() || null,
@@ -3560,7 +3664,19 @@ async function saveItem() {
       dormant: !!d.dormant, photo_url: photoUrl || null
     };
     if (d.id) {
+      // qty is deliberately not in the payload: a plain UPDATE would clobber
+      // whatever someone else booked in while this form was open. The count
+      // goes through apply_movement instead, which settles it server-side in
+      // one atomic step and writes the log line that says who corrected it.
       await DB.updateProduct(d.id, payload);
+      const delta = num(d.qty) - num(d.qty0);
+      if (delta) {
+        btn.textContent = 'Updating count…';
+        await DB.applyMovement({
+          productId: d.id, delta, reason: 'set', person: state.me,
+          note: 'Count corrected on the item form'
+        });
+      }
     } else {
       payload.qty = num(d.qty);
       payload.__person = state.me;

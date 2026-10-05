@@ -63,6 +63,12 @@ alter table public.products add column if not exists sec_price       text;
 alter table public.products add column if not exists pack_size       text;
 alter table public.products add column if not exists pack_weight     text;
 alter table public.products add column if not exists dormant         boolean not null default false;
+-- A note against each storage location, as JSON keyed by location code:
+-- {"A1R1":"the long ones, top shelf","A2R3":"offcuts in the blue bin"}.
+-- Deliberately not folded into products.location: that column is split on
+-- commas and parsed as codes by the Racks screen, the search, the sort order
+-- and the printed card, so a note with a comma in it would break all of them.
+alter table public.products add column if not exists location_notes  text;
 
 -- ---------------------------------------------------------
 -- Reorder board — a Kanban-style signal card per item that needs

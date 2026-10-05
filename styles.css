@@ -369,7 +369,43 @@ img { display: block; }
 /* Location picker: the codes an item sits at, as removable chips, and a row
    that reads like the code itself — [A] [1] R [1] Add. */
 .locpick { background: var(--bg-elevated-2); border-radius: var(--r-md); padding: 12px; margin-bottom: 12px; }
-.loc-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 34px; align-items: center; margin-bottom: 12px; }
+/* One row per location once notes came in: code, note box, remove. Stacked
+   rather than wrapped chips, so a note is unmistakably tied to its own code. */
+.loc-chips { display: flex; flex-direction: column; gap: 6px; min-height: 34px; margin-bottom: 12px; }
+.loc-row { display: flex; align-items: center; gap: 8px; }
+.loc-row .loc-chip { flex: 0 0 auto; padding: 5px 11px; }
+.loc-note {
+  flex: 1; min-width: 0; background: var(--bg-elevated-3); color: var(--label);
+  border: none; border-radius: 9px; padding: 9px 11px; font-size: 15px; outline: none;
+}
+.loc-note::placeholder { color: var(--label-tertiary); }
+.loc-del {
+  flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; border: none;
+  background: none; color: var(--label-secondary); font-size: 19px; line-height: 1;
+  cursor: pointer; padding: 0; -webkit-appearance: none;
+}
+.loc-del:active { background: rgba(255,255,255,0.12); }
+
+/* The same pairing read back on the item sheet. */
+.field-row-stack { display: block; }
+.loc-lines { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.loc-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.loc-line-code {
+  color: var(--sys-teal); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
+}
+.loc-line-note { color: var(--label-secondary); font-size: 14px; }
+
+/* Groups already in use, under the Group box. Deliberately unlike the
+   category pills below them, which these used to be mistaken for. */
+.suggest-wrap { margin: 6px 2px 0; }
+.suggest-label { font-size: 12px; color: var(--label-tertiary); margin-bottom: 5px; }
+.suggest-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.suggest-chip {
+  background: none; color: var(--sys-blue); border: 1px solid rgba(10,132,255,0.45);
+  border-radius: var(--r-pill); padding: 5px 12px; font-size: 13.5px; font-weight: 600;
+  cursor: pointer; -webkit-appearance: none; -webkit-tap-highlight-color: transparent;
+}
+.suggest-chip:active { background: rgba(10,132,255,0.18); }
 .loc-none { font-size: 14px; color: var(--label-tertiary); padding-left: 2px; }
 .loc-chip {
   display: inline-flex; align-items: center; gap: 2px; padding: 5px 4px 5px 11px; border-radius: var(--r-pill);
