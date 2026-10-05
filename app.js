@@ -131,8 +131,22 @@ function orDash(v) { const s = (v == null ? '' : String(v)).trim(); return s ? e
    a comma-separated list — "A1R1, A1R2" — in the same text column as before.
    Anything that does not match (the old A3.1.1 style) is kept and shown as it
    is, never dropped, and collects under "?" on the Racks screen to be fixed. */
-const LOC_RE = /^([A-Z])(\d{1,3})R(\d{1,3})$/;
+/* Once stock is kept at more than one site, A1R1 on its own stops saying
+   where it is. A code can carry an optional prefix — WH1-A1R1 — naming the
+   site, up to three characters.
+
+   The hyphen is load-bearing: WH1A1R1 cannot be read back reliably, since
+   there is no telling WH1 + A1R1 from WH + 1A1R1. Codes written before
+   prefixes existed have none, are still valid, and are left exactly as they
+   are — the prefix is optional for good. */
+const LOC_RE = /^(?:([A-Z0-9]{1,3})-)?([A-Z])(\d{1,3})R(\d{1,3})$/;
+const LOC_PREFIX_MAX = 3;
 function normLoc(s) { return String(s || '').toUpperCase().replace(/\s+/g, ''); }
+/** Letters and digits only, uppercased, capped — so a prefix can never carry
+    a hyphen or a comma and break the code apart or the stored list. */
+function normLocPrefix(s) {
+  return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, LOC_PREFIX_MAX);
+}
 /** Accepts the stored string or an array; always returns distinct codes. */
 function locList(v) {
   const raw = Array.isArray(v) ? v.join(',') : String(v || '');
@@ -140,25 +154,48 @@ function locList(v) {
 }
 function parseLoc(code) {
   const m = LOC_RE.exec(normLoc(code));
-  return m ? { letter: m[1], num: Number(m[2]), rack: Number(m[3]) } : null;
+  return m ? { prefix: m[1] || '', letter: m[2], num: Number(m[3]), rack: Number(m[4]) } : null;
 }
-function buildLoc(letter, n, rack) {
+function buildLoc(prefix, letter, n, rack) {
+  const pre = normLocPrefix(prefix);
   const a = String(letter || '').toUpperCase(), b = parseInt(n, 10), c = parseInt(rack, 10);
   if (!/^[A-Z]$/.test(a) || !(b > 0) || !(c > 0)) return '';
-  return a + b + 'R' + c;
+  return (pre ? pre + '-' : '') + a + b + 'R' + c;
 }
-/** Numeric, not alphabetical: A2R1 comes before A10R1. */
-function locSortKey(code) {
-  const p = parseLoc(code);
-  if (!p) return 'zzz' + normLoc(code);
-  return p.letter + String(p.num).padStart(4, '0') + String(p.rack).padStart(4, '0');
+/** Site first, then walking order within it — and numerically, so A2R1 comes
+    before A10R1. Codes with no prefix lead: they are the stock that was here
+    before sites were named, and burying them under the prefixed ones would
+    hide them. Anything unparseable sorts last rather than being dropped. */
+function compareLocs(a, b) {
+  const pa = parseLoc(a), pb = parseLoc(b);
+  if (!pa || !pb) {
+    if (!pa && !pb) return normLoc(a).localeCompare(normLoc(b));
+    return pa ? -1 : 1;
+  }
+  if (pa.prefix !== pb.prefix) {
+    if (!pa.prefix) return -1;
+    if (!pb.prefix) return 1;
+    return pa.prefix.localeCompare(pb.prefix);
+  }
+  return pa.letter.localeCompare(pb.letter) || pa.num - pb.num || pa.rack - pb.rack;
 }
-function sortLocs(v) { return locList(v).sort((a, b) => locSortKey(a).localeCompare(locSortKey(b))); }
+function sortLocs(v) { return locList(v).sort(compareLocs); }
 /** For display and for saving: sorted, one comma-space between codes. */
 function formatLocs(v) { return sortLocs(v).join(', '); }
 /** The first location in walking order, which is what an item sorts by. */
 function firstLoc(v) { return sortLocs(v)[0] || ''; }
-function locGroup(code) { const p = parseLoc(code); return p ? p.letter : '?'; }
+/** What the Racks screen files a code under: its site where it has one, so
+    each site's racks sit together, and otherwise the rack letter as before. */
+function locGroup(code) { const p = parseLoc(code); return p ? (p.prefix || p.letter) : '?'; }
+/** Every prefix already in use, for offering back rather than retyping. */
+function knownLocPrefixes() {
+  const seen = {};
+  activeProducts().forEach(p => locList(p.location).forEach(c => {
+    const q = parseLoc(c);
+    if (q && q.prefix) seen[q.prefix] = true;
+  }));
+  return Object.keys(seen).sort();
+}
 function locChipsHtml(v) {
   return sortLocs(v).map(c => '<span class="meta-chip loc">' + escapeHtml(c) + '</span>').join('');
 }
@@ -390,11 +427,12 @@ function renderHeader() {
   scan.hidden = false; gear.hidden = false; me.hidden = false;
 
   const dateStr = new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  // Sites where they are named, rack letters where they are not.
   const rackLetters = Array.from(new Set(activeProducts().flatMap(p => locList(p.location).map(locGroup)).filter(r => r !== '?'))).sort();
   const titles = {
     home: ['Home', (state.me || 'Sign in') + ' · ' + (CFG.SITE_NAME || 'Off-site store') + ' · ' + dateStr],
     stock: ['Stock', state.products.length + ' line' + (state.products.length === 1 ? '' : 's')],
-    locations: ['Racks', rackLetters.length ? rackLetters.join(', ') + ' · tap a letter to open it' : 'Browse by location'],
+    locations: ['Racks', rackLetters.length ? rackLetters.join(', ') + ' · tap one to open it' : 'Browse by location'],
     items: ['Items', state.products.length + ' item' + (state.products.length === 1 ? '' : 's') + ' · manage catalogue'],
     picking: ['Picking', 'Lists of what to fetch off the racks'],
     reorder: ['Reorder', 'The signal board — what to buy, and where it is'],
@@ -3040,6 +3078,9 @@ function openItemForm(existing) {
     // The letter the picker starts on: this item's own, so adding a neighbouring
     // location is a two-number job.
     locLetter: (parseLoc(firstLoc(p.location)) || {}).letter || 'A',
+    // Start on the site this item is already at, so adding a second rack in
+    // the same building is a two-number job.
+    locPrefix: (parseLoc(firstLoc(p.location)) || {}).prefix || '',
     bulk_location: p.bulk_location || '',
     place_of_use: p.place_of_use || '',
     client_id: p.client_id || '',
@@ -3168,6 +3209,14 @@ function renderItemForm() {
     '<div class="form-section-label">Location</div>' +
     '<div class="locpick">' +
       '<div class="loc-chips" id="locChips">' + locEditChipsHtml(d.locs, d.locNotes) + '</div>' +
+      // The site sits on its own line above: squeezing a sixth box onto the
+      // code row left nothing wide enough to read on a phone.
+      '<div class="locpre-row">' +
+        '<input id="lPrefix" type="text" maxlength="' + LOC_PREFIX_MAX + '" autocapitalize="characters" ' +
+          'spellcheck="false" placeholder="Site" aria-label="Site prefix" value="' + escapeHtml(d.locPrefix || '') + '">' +
+        '<span class="locpre-note">Up to ' + LOC_PREFIX_MAX + ' characters. Leave empty for no site.</span>' +
+      '</div>' +
+      '<div class="locpre-suggest" id="locPreSuggest">' + locPrefixSuggestHtml(d.locPrefix) + '</div>' +
       // Laid out the way the code reads — letter, number, R, number — so the
       // format explains itself without a label on every box.
       '<div class="locpick-row">' +
@@ -3179,7 +3228,7 @@ function renderItemForm() {
         '<input id="lRackNo" type="number" inputmode="numeric" min="1" max="999" placeholder="1" aria-label="Rack">' +
         '<button class="locpick-add" data-locadd type="button">Add</button>' +
       '</div>' +
-      '<div class="locpick-hint" id="locHint">For example A1R1. Add more than one if it spans several.</div>' +
+      '<div class="locpick-hint" id="locHint">For example A1R1, or WH1-A1R1 with a site. Add more than one if it spans several.</div>' +
     '</div>' +
     '<div class="form-card" style="margin-top:10px;">' +
       formFieldHtml('fBulk', 'Bulk location', d.bulk_location, { placeholder: 'e.g. Yard 2, bay 4' }) +
@@ -3295,6 +3344,19 @@ function wireGroupSuggest(d, groups) {
   wire();
 }
 
+/** The sites already in use, offered under the box so the same three letters
+    are not retyped — and, more to the point, not mistyped into a fifth site
+    nobody meant to create. */
+function locPrefixSuggestHtml(current) {
+  const known = knownLocPrefixes();
+  if (!known.length) return '';
+  const cur = normLocPrefix(current);
+  return '<span class="locpre-label">Sites in use</span>' +
+    known.map(x =>
+      '<button class="locpre-chip' + (x === cur ? ' active' : '') + '" data-locpre="' + escapeHtml(x) + '" type="button">' +
+        escapeHtml(x) + '</button>').join('');
+}
+
 /* One row per location: the code, a note box, and the remove button. A row
    rather than a chip because the note needs somewhere to live, and because
    with several locations it has to be obvious which note belongs to which. */
@@ -3319,6 +3381,7 @@ function locEditChipsHtml(locs, notes) {
 function wireLocPicker(d) {
   const chips = $('locChips'), hint = $('locHint');
   const letter = $('lLetter'), n = $('lNum'), rack = $('lRackNo');
+  const pre = $('lPrefix'), preBox = $('locPreSuggest');
 
   const say = (msg, bad) => { hint.textContent = msg; hint.classList.toggle('bad', !!bad); };
   const redraw = () => { chips.innerHTML = locEditChipsHtml(d.locs, d.locNotes); wireChips(); };
@@ -3337,8 +3400,18 @@ function wireLocPicker(d) {
     }));
   };
 
+  const redrawPrefixes = () => {
+    if (!preBox) return;
+    preBox.innerHTML = locPrefixSuggestHtml(d.locPrefix);
+    preBox.querySelectorAll('[data-locpre]').forEach(b => b.addEventListener('click', () => {
+      d.locPrefix = b.getAttribute('data-locpre');
+      pre.value = d.locPrefix;
+      redrawPrefixes();
+    }));
+  };
+
   const add = () => {
-    const code = buildLoc(letter.value, n.value, rack.value);
+    const code = buildLoc(d.locPrefix, letter.value, n.value, rack.value);
     if (!code) { say('Fill in both numbers — for example ' + letter.value + '1R1.', true); (n.value ? rack : n).focus(); return; }
     if (d.locs.includes(code)) { say(code + ' is already on this item.', true); return; }
     d.locs = sortLocs(d.locs.concat(code));
@@ -3348,6 +3421,18 @@ function wireLocPicker(d) {
     say('Added ' + code + '.');
     n.focus();
   };
+
+  if (pre) {
+    // Kept on the draft so it carries to the next location added, and so a
+    // half-typed site is not lost when the chips redraw.
+    pre.addEventListener('input', () => {
+      const clean = normLocPrefix(pre.value);
+      if (pre.value !== clean) pre.value = clean;
+      d.locPrefix = clean;
+    });
+    pre.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); n.focus(); } });
+  }
+  redrawPrefixes();
 
   letter.addEventListener('change', () => { d.locLetter = letter.value; });
   sheetEl.querySelector('[data-locadd]').addEventListener('click', add);
@@ -3361,7 +3446,8 @@ function wireLocPicker(d) {
 function takePendingLoc(d) {
   const letter = $('lLetter'), n = $('lNum'), rack = $('lRackNo');
   if (!letter || !n || !rack) return;
-  const code = buildLoc(letter.value, n.value, rack.value);
+  const pre = $('lPrefix');
+  const code = buildLoc(pre ? pre.value : d.locPrefix, letter.value, n.value, rack.value);
   if (code && !d.locs.includes(code)) d.locs = sortLocs(d.locs.concat(code));
 }
 

@@ -418,6 +418,27 @@ img { display: block; }
   font-size: 17px; line-height: 1; cursor: pointer; opacity: 0.75; padding: 0;
 }
 .loc-chip button:active { background: rgba(255,255,255,0.12); }
+/* The site prefix, on its own line above the code: a sixth box squeezed onto
+   the code row left nothing wide enough to read on a phone. */
+.locpre-row { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+.locpre-row input {
+  flex: 0 0 76px; background: var(--bg-elevated-3); color: var(--label); border: none;
+  border-radius: 9px; padding: 10px 4px; font-size: 16px; font-weight: 700;
+  text-align: center; letter-spacing: 0.06em; outline: none; text-transform: uppercase;
+}
+.locpre-row input::placeholder { letter-spacing: normal; font-weight: 600; color: var(--label-tertiary); }
+.locpre-note { font-size: 12px; color: var(--label-tertiary); line-height: 1.35; min-width: 0; }
+.locpre-suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 9px; }
+.locpre-suggest:empty { display: none; }
+.locpre-label { font-size: 12px; color: var(--label-tertiary); margin-right: 1px; }
+.locpre-chip {
+  background: none; color: var(--sys-teal); border: 1px solid rgba(100,210,255,0.45);
+  border-radius: var(--r-pill); padding: 4px 11px; font-size: 13px; font-weight: 700;
+  letter-spacing: 0.04em; cursor: pointer; -webkit-appearance: none; -webkit-tap-highlight-color: transparent;
+}
+.locpre-chip.active { background: rgba(100,210,255,0.18); }
+.locpre-chip:active { opacity: 0.6; }
+
 .locpick-row { display: flex; align-items: center; gap: 6px; }
 .locpick-row select, .locpick-row input {
   background: var(--bg-elevated-3); color: var(--label); border: none; border-radius: 9px; padding: 10px 4px;
