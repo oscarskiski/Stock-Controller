@@ -2402,6 +2402,13 @@ const KANBAN_TYPES = {
 };
 let kanbanType = localStorage.getItem('ys_kanban_type') || 'external';
 
+/* The item card is not a Kanban signal — no re-order quantity, no supplier,
+   nothing to action. Just the name, the code and the picture, for labelling
+   a bin or a shelf. It rides in the same picker as a fifth option. */
+const ITEM_CARD = 'item';
+function isItemCard(t) { return (t || kanbanType) === ITEM_CARD; }
+let itemCardLarge = localStorage.getItem('ys_item_card_large') === '1';
+
 /* Per-type banner colour the user has picked, keyed by type. Anything not in
    here falls back to the type's shipped colour. */
 let kanbanColors = (() => {
@@ -2424,10 +2431,34 @@ function bannerInk(hex) {
   return (0.2126 * r + 0.7152 * g + 0.0722 * b) > 150 ? '#000' : '#fff';
 }
 
-/* 95 x 65mm landscape card: 95x10mm type header, then a 30mm photo/QR rail
-   on the left and a 65mm-wide field stack on the right. Every box size and
+/* 92 x 62mm landscape card: 92x9.5mm type header, then a 29mm photo/QR rail
+   on the left and a 63mm-wide field stack on the right. Every box size and
    font size is fixed in mm/pt in styles.css so it prints true to template. */
+/* Name as a header band, then the QR and the photo filling the rest. The
+   15/85 split and the half-and-half body are percentages in the stylesheet,
+   so the same markup serves both the 92x62mm and the 184x124mm card. */
+function itemCardHtml(p) {
+  let qrSvg = '';
+  try { qrSvg = QR.toSvg(itemDeepLink(p), { dark: '#000' }); } catch (e) { qrSvg = ''; }
+
+  const name = String(p.name || '');
+  const size = name.length > 40 ? ' icard-head-xs' : name.length > 24 ? ' icard-head-sm' : '';
+
+  return '<div class="icard' + (itemCardLarge ? ' icard-lg' : '') + '">' +
+    '<div class="icard-head' + size + '">' + escapeHtml(name) + '</div>' +
+    '<div class="icard-body">' +
+      '<div class="icard-qr">' + (qrSvg || '<span class="icard-qr-fallback">QR</span>') + '</div>' +
+      '<div class="icard-pic">' +
+        (p.photo_url
+          ? '<img src="' + escapeHtml(p.photo_url) + '" alt="">'
+          : '<div class="icard-pic-ph">no photo</div>') +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
 function kanbanCardHtml(p) {
+  if (isItemCard()) return itemCardHtml(p);
   const t = KANBAN_TYPES[kanbanType] || KANBAN_TYPES.external;
   let qrSvg = '';
   try { qrSvg = QR.toSvg(itemDeepLink(p), { dark: '#000' }); } catch (e) { qrSvg = ''; }
@@ -2448,7 +2479,7 @@ function kanbanCardHtml(p) {
   const isPlain = kanbanType === 'plain';
   const headText = isPlain ? p.name : t.label;
   const nameText = isPlain ? 'KANBAN' : p.name;
-  // Whatever lands in the banner has to fit 95mm on one line — step the 18pt
+  // Whatever lands in the banner has to fit 92mm on one line — step the 17pt
   // down for the long ones rather than clipping them.
   const headLen = String(headText || '').length;
   const headSize = headLen > 30 ? ' kcard-head-xs' : headLen > 22 ? ' kcard-head-sm' : '';
@@ -2492,27 +2523,36 @@ function openPrintCardSheet(p) {
 const KANBAN_SWATCHES = ['#B0301F', '#6B2E1F', '#1E7B34', '#1F5FA8', '#C9782A', '#5B2D82', '#2B2B2B'];
 
 function renderPrintCardSheet(p) {
-  const types = [['internal', 'Internal'], ['external', 'External'], ['manufacture', 'Manufacture'], ['plain', 'Plain']];
+  const types = [['internal', 'Internal'], ['external', 'External'], ['manufacture', 'Manufacture'], ['plain', 'Plain'], [ITEM_CARD, 'Item']];
   const cur = kanbanColor(kanbanType);
   const isDefault = !kanbanColors[kanbanType];
+  const item = isItemCard();
+  const dims = item ? (itemCardLarge ? '184 &times; 124mm' : '92 &times; 62mm') : '92 &times; 62mm';
 
   sheetEl.innerHTML =
     '<div class="sheet-handle no-print"></div>' +
-    '<div class="sheet-title no-print">Print Kanban card</div>' +
-    '<div class="sheet-sub no-print">95 &times; 65mm. Turn off "Fit to page" / "Scale" in the print dialog so it prints true size.</div>' +
+    '<div class="sheet-title no-print">' + (item ? 'Print item card' : 'Print Kanban card') + '</div>' +
+    '<div class="sheet-sub no-print">' + dims + '. Turn off "Fit to page" / "Scale" in the print dialog so it prints true size.</div>' +
     '<div class="segmented no-print">' +
       types.map(([k, label]) =>
         '<button class="seg-btn ' + (kanbanType === k ? 'active' : '') + '" data-ktype="' + k + '" type="button">' + label + '</button>').join('') +
     '</div>' +
-    '<div class="kcolor-row no-print">' +
-      '<span class="kcolor-label">Label colour</span>' +
-      KANBAN_SWATCHES.map(c =>
-        '<button class="kcolor-dot ' + (c.toLowerCase() === cur.toLowerCase() ? 'active' : '') + '" data-kswatch="' + c + '" style="background:' + c + '" type="button" title="' + c + '"></button>').join('') +
-      '<label class="kcolor-custom" title="Pick any colour">' +
-        '<input type="color" data-kcolor value="' + cur + '">' +
-      '</label>' +
-      (isDefault ? '' : '<button class="kcolor-reset" data-kreset type="button">Reset</button>') +
-    '</div>' +
+    // An item card has no banner to colour, so that row gives way to the
+    // size choice — the only thing there is to pick on one.
+    (item
+      ? '<div class="segmented no-print" style="margin-top:8px;">' +
+          '<button class="seg-btn ' + (itemCardLarge ? '' : 'active') + '" data-isize="std" type="button">Standard 92 &times; 62</button>' +
+          '<button class="seg-btn ' + (itemCardLarge ? 'active' : '') + '" data-isize="lg" type="button">Large 184 &times; 124</button>' +
+        '</div>'
+      : '<div class="kcolor-row no-print">' +
+          '<span class="kcolor-label">Label colour</span>' +
+          KANBAN_SWATCHES.map(c =>
+            '<button class="kcolor-dot ' + (c.toLowerCase() === cur.toLowerCase() ? 'active' : '') + '" data-kswatch="' + c + '" style="background:' + c + '" type="button" title="' + c + '"></button>').join('') +
+          '<label class="kcolor-custom" title="Pick any colour">' +
+            '<input type="color" data-kcolor value="' + cur + '">' +
+          '</label>' +
+          (isDefault ? '' : '<button class="kcolor-reset" data-kreset type="button">Reset</button>') +
+        '</div>') +
     '<div class="print-area">' + kanbanCardHtml(p) + '</div>' +
     '<div class="sheet-actions no-print">' +
       '<button class="sheet-cancel" data-close type="button">Close</button>' +
@@ -2524,15 +2564,23 @@ function renderPrintCardSheet(p) {
     localStorage.setItem('ys_kanban_type', kanbanType);
     renderPrintCardSheet(p);
   }));
+  sheetEl.querySelectorAll('[data-isize]').forEach(b => b.addEventListener('click', () => {
+    itemCardLarge = b.getAttribute('data-isize') === 'lg';
+    localStorage.setItem('ys_item_card_large', itemCardLarge ? '1' : '0');
+    renderPrintCardSheet(p);
+  }));
   sheetEl.querySelectorAll('[data-kswatch]').forEach(b => b.addEventListener('click', () => {
     setKanbanColor(kanbanType, b.getAttribute('data-kswatch'));
     renderPrintCardSheet(p);
   }));
+  // Absent on an item card, which has no banner to colour.
   const picker = sheetEl.querySelector('[data-kcolor]');
-  // Repaint the banner live as the picker is dragged, but only re-render the
-  // sheet once it settles — a re-render mid-drag closes the colour picker.
-  picker.addEventListener('input', () => paintBanner(picker.value));
-  picker.addEventListener('change', () => { setKanbanColor(kanbanType, picker.value); renderPrintCardSheet(p); });
+  if (picker) {
+    // Repaint the banner live as the picker is dragged, but only re-render the
+    // sheet once it settles — a re-render mid-drag closes the colour picker.
+    picker.addEventListener('input', () => paintBanner(picker.value));
+    picker.addEventListener('change', () => { setKanbanColor(kanbanType, picker.value); renderPrintCardSheet(p); });
+  }
   const reset = sheetEl.querySelector('[data-kreset]');
   if (reset) reset.addEventListener('click', () => {
     delete kanbanColors[kanbanType];

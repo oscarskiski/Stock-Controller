@@ -618,7 +618,7 @@ img { display: block; }
 .scan-stage-off { background: var(--bg-elevated); aspect-ratio: auto; padding: 22px 18px; }
 .scan-off-note { font-size: 14px; color: var(--label-secondary); line-height: 1.5; text-align: center; }
 
-/* ---------- Printable Kanban card (95mm x 65mm, landscape) ----------
+/* ---------- Printable Kanban card (92mm x 62mm, landscape) ----------
    Laid out to the printed template, all sizes true to the paper:
      header      95 x 10mm    18pt bold
      photo/QR    30 x 55mm    (left rail)
@@ -631,39 +631,39 @@ img { display: block; }
    than left as a gap at the foot of the stack. */
 .print-area { display: flex; justify-content: center; padding: 8px 0 4px; overflow-x: auto; }
 .kcard {
-  width: 95mm; height: 65mm; border: 0.35mm solid #000; background: #fff; color: #000;
+  width: 92mm; height: 62mm; border: 0.35mm solid #000; background: #fff; color: #000;
   display: flex; flex-direction: column; overflow: hidden; font-family: var(--sans); flex-shrink: 0;
 }
-/* Item name across the full 95mm long side; the band colour is what says
-   which kind of card this is. Long names step down from the 18pt so they
+/* Item name across the full 92mm long side; the band colour is what says
+   which kind of card this is. Long names step down from the 17pt so they
    still fit on one line. */
 .kcard-head {
-  height: 10mm; flex: 0 0 10mm; color: #fff; font-weight: 800; font-size: 18pt; line-height: 10mm;
+  height: 9.5mm; flex: 0 0 9.5mm; color: #fff; font-weight: 800; font-size: 17pt; line-height: 9.5mm;
   text-align: center; overflow: hidden; white-space: nowrap; padding: 0 1.5mm;
 }
 .kcard-head-sm { font-size: 14pt; }
 .kcard-head-xs { font-size: 11pt; }
-/* Fills what is left under the header: 55mm less the card's own 0.35mm rules. */
+/* Fills what is left under the header: 52.5mm less the card's own 0.35mm rules. */
 .kcard-body { flex: 1 1 auto; min-height: 0; display: flex; }
 /* Left rail: photo on top, QR under it */
 .kcard-left {
-  width: 30mm; flex: 0 0 30mm; border-right: 0.35mm solid #000;
+  width: 29mm; flex: 0 0 29mm; border-right: 0.35mm solid #000;
   display: flex; flex-direction: column;
 }
-.kcard-photo { width: 100%; height: 27mm; flex: 0 0 27mm; object-fit: cover; border-bottom: 0.35mm solid #000; display: block; }
+.kcard-photo { width: 100%; height: 25mm; flex: 0 0 25mm; object-fit: cover; border-bottom: 0.35mm solid #000; display: block; }
 .kcard-photo-ph {
   display: flex; align-items: center; justify-content: center;
   color: #999; font-size: 7pt; background: #f2f2f2;
 }
 .kcard-qr { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
-/* 27mm inside a 30mm rail: the spec quiet zone eats 8 of the 45 units, so
-   the code itself lands at ~0.6mm a module — comfortable for a phone. */
-.kcard-qr svg { width: 27mm; height: 27mm; display: block; }
+/* 25mm inside a 29mm rail: the spec quiet zone eats 8 of the 45 units, so
+   the code itself lands at ~0.55mm a module — still comfortable for a phone. */
+.kcard-qr svg { width: 25mm; height: 25mm; display: block; }
 .kcard-qr-fallback {
-  width: 27mm; height: 27mm; display: flex; align-items: center; justify-content: center;
+  width: 25mm; height: 25mm; display: flex; align-items: center; justify-content: center;
   border: 0.2mm dashed #999; color: #999; font-size: 7pt;
 }
-/* Right side: the remaining 65mm, a stack of fixed-height boxes */
+/* Right side: the remaining 63mm, a stack of fixed-height boxes */
 .kcard-fields { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; }
 .kcard-name {
   flex: 1 1 13mm; font-size: 11pt; font-weight: 700; line-height: 1.15;
@@ -691,6 +691,52 @@ img { display: block; }
 .kcard-row-split .kcard-k2 { width: 10mm; flex: 0 0 10mm; }
 .kcard-row-split .kcard-v2 { flex: 1 1 auto; }
 .kcard-k2 { border-left: 0.25mm solid #000; }
+
+/* ---------- Item card ----------
+   Not a Kanban signal: just "this is the thing, here is its code". Name as a
+   header across the top, then the QR and the photo filling everything under
+   it. Two sizes off the same markup — 92x62mm to match a Kanban card, and
+   184x124mm with both sides doubled, for reading across a workshop.
+
+   The split is by percentage rather than millimetres precisely so one set of
+   rules serves both sizes: 15% name, 85% body, whatever the card measures. */
+.icard {
+  width: 92mm; height: 62mm; border: 0.35mm solid #000; background: #fff; color: #000;
+  display: flex; flex-direction: column; overflow: hidden; font-family: var(--sans); flex-shrink: 0;
+}
+.icard-lg { width: 184mm; height: 124mm; }
+.icard-head {
+  flex: 0 0 15%; min-height: 0; display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 15pt; line-height: 1.1; text-align: center;
+  padding: 0 2mm; overflow: hidden; border-bottom: 0.35mm solid #000;
+}
+.icard-lg .icard-head { font-size: 30pt; }
+/* Long names step down rather than spilling out of the band. */
+.icard-head-sm { font-size: 11.5pt; }
+.icard-head-xs { font-size: 9pt; }
+.icard-lg .icard-head-sm { font-size: 23pt; }
+.icard-lg .icard-head-xs { font-size: 18pt; }
+
+.icard-body { flex: 1 1 85%; min-height: 0; display: flex; }
+/* Half each. The QR leads, so it falls under the thumb first. */
+.icard-qr, .icard-pic {
+  flex: 1 1 50%; min-width: 0; display: flex; align-items: center; justify-content: center;
+  padding: 2mm; box-sizing: border-box;
+}
+.icard-qr { border-right: 0.35mm solid #000; }
+/* The SVG carries a viewBox and no width, so it scales to the box and stays
+   square on its own — no size needs restating per card size. */
+.icard-qr svg { width: 100%; height: 100%; display: block; }
+.icard-qr-fallback {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  border: 0.2mm dashed #999; color: #999; font-size: 8pt;
+}
+/* contain, not cover: the whole picture, nothing trimmed off. */
+.icard-pic img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+.icard-pic-ph {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  color: #999; font-size: 8pt; background: #f2f2f2;
+}
 
 /* Label-colour picker in the print sheet: presets plus a native swatch */
 .kcolor-row {
@@ -743,11 +789,12 @@ img { display: block; }
      without this the coloured banner prints white, and its white text vanishes. */
   #printRoot, #printRoot * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
 
-  /* Print on whatever paper is loaded (usually A4) with the card at true
-     95x65mm, ready to cut out — forcing a 95x65mm page size just confuses
-     printers that only hold A4. */
+  /* Print on whatever paper is loaded (usually A4) with the card at its true
+     size, ready to cut out — forcing the page to the card's own size just
+     confuses printers that only hold A4. The 184mm item card still fits
+     inside A4 portrait's printable width with this 10mm margin. */
   @page { margin: 10mm; }
-  #printRoot .kcard { page-break-inside: avoid; break-inside: avoid; }
+  #printRoot .kcard, #printRoot .icard { page-break-inside: avoid; break-inside: avoid; }
 
   /* A picking list can run to several pages: keep the column headings on
      each one, never split a line across a page break, and keep the
