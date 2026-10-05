@@ -2511,8 +2511,16 @@ function bookOutSheetHtml(p) {
         '</div>').join('')
     : '<div class="bsheet-loc"><span class="bsheet-loc-none">No location recorded</span></div>';
 
-  const rows = new Array(BOOKOUT_ROWS).fill(
-    '<tr><td></td><td></td><td></td><td></td><td></td></tr>').join('');
+  /* The first Total cell is filled in with the count as it stands, so
+     whoever writes the next line has something to work from instead of
+     having to go and look it up. It is a snapshot of the moment the sheet
+     was printed — every line under it is written by hand from there. */
+  const blank = '<tr><td></td><td></td><td></td><td></td><td></td></tr>';
+  const opening =
+    '<tr><td></td><td></td><td></td>' +
+    '<td class="bsheet-opening">' + escapeHtml(fmtQty(num(p.qty))) + '</td>' +
+    '<td></td></tr>';
+  const rows = opening + new Array(BOOKOUT_ROWS - 1).fill(blank).join('');
 
   return '<div class="bsheet">' +
     '<div class="bsheet-head">' +

@@ -678,6 +678,8 @@ img { display: block; }
    write a name in, and 28 of them fill A4 under the header without spilling
    onto a second page carrying nothing but blank lines. */
 .bsheet-table td { padding: 3.6mm 1.5mm; }
+/* The count as printed, standing where the next running total goes. */
+.bsheet-opening { text-align: center; font-weight: 800; font-size: 12pt; font-variant-numeric: tabular-nums; }
 
 .kcard {
   width: 92mm; height: 62mm; border: 0.35mm solid #000; background: #fff; color: #000;
