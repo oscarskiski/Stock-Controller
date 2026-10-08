@@ -25,6 +25,38 @@
 -- =========================================================
 
 -- ---------------------------------------------------------
+-- Before anything else: refuse to run if it would lock everyone out
+-- ---------------------------------------------------------
+-- Every policy below hangs off is_staff(). With no profile holding a role
+-- it recognises, this file would hand the building its own keys and throw
+-- them in the river. First statement in the file, so it stops before a
+-- single policy has changed.
+do $$
+begin
+  if not exists (select 1 from public.profiles where role in ('admin', 'staff')) then
+    raise exception 'Refusing to run: no admin or staff profile exists, so this would lock everybody out.';
+  end if;
+end $$;
+
+-- is_staff is defined twice in schema.sql — the earlier one matches 'staff'
+-- alone, the later one also matches 'admin'. Which of them a database ended
+-- up with depends on how much of schema.sql was last run, and getting the
+-- earlier one means every admin loses the stock the instant this file runs.
+-- Settle it here rather than hope: create or replace is safe either way.
+create or replace function public.is_staff() returns boolean
+  language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role in ('admin', 'staff'))
+$$;
+
+create or replace function public.is_admin() returns boolean
+  language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+$$;
+
+grant execute on function public.is_staff(), public.is_admin(),
+                         public.my_client_id(), public.my_supplier_id() to authenticated;
+
+-- ---------------------------------------------------------
 -- Stock: everyone who works here sees all of it. A client reads the rows
 -- allocated to their own company, and only reads them.
 -- ---------------------------------------------------------
