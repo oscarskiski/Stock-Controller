@@ -380,11 +380,15 @@ async function refresh(showSpinner) {
       state.products = (await DB.listProducts()) || [];
       state.movements = []; state.people = []; state.reorderCards = []; state.pickLists = [];
     } else {
-      const [products, movements, people, cards, clients, picks] = await Promise.all([
+      const [products, movements, people, cards, clients, picks, orders] = await Promise.all([
         DB.listProducts(), DB.listMovements(300), DB.listPeople(), DB.listReorderCards(),
         DB.listClients().catch(() => []),
-        DB.listPickLists().catch(() => [])
+        DB.listPickLists().catch(() => []),
+        // Empty until the supplier schema is in place, and on a database
+        // where it never is — so a failure here must not sink the load.
+        DB.listSupplyOrders().catch(() => [])
       ]);
+      state.supplyOrders = orders || [];
       state.products = products || [];
       state.movements = movements || [];
       state.people = people || [];
@@ -2704,6 +2708,11 @@ function renderProductDetail(p) {
     '</div>' +
     '<div class="field-group" style="margin-bottom:12px;">' +
       '<div class="field-row"><span class="fname">Owner</span><span class="field-val">' + (clientNameOf(p) ? escapeHtml(clientNameOf(p)) + ' (client stock)' : 'Ours') + '</span></div>' +
+      (p.supplier_id
+        ? '<div class="field-row"><span class="fname">Watched by</span><span class="field-val">' +
+            escapeHtml(accountName(p.supplier_id) || 'a supplier') + '</span></div>'
+        : '') +
+      incomingRowHtml(p) +
       // With notes against the locations the codes go on their own lines, so
       // each note sits with the place it describes; without any, the old
       // single-line "A1R1, A2R3" is tidier and stays.
@@ -3409,6 +3418,7 @@ function openItemForm(existing) {
     bulk_location: p.bulk_location || '',
     place_of_use: p.place_of_use || '',
     client_id: p.client_id || '',
+    supplier_id: p.supplier_id || '',
     pref_supplier: p.pref_supplier || '',
     pref_moq_qty: prefMoq.qty, pref_moq_unit: prefMoq.unit,
     pref_lead_qty: prefLead.qty, pref_lead_unit: prefLead.unit,
@@ -3471,10 +3481,48 @@ function qtyUnitPairHtml(qtyId, qtyLabel, unitId, unitLabel, qtyVal, unitVal, op
 
 /** What the owner pills mean, spelled out — it is the one field on this form
     that changes who else can see the item. */
+/* The clients table holds both kinds of outside account. They mean opposite
+   things about a product — a client's stock belongs to them, a supplier's is
+   ours and bought from them — so they must never share a picker. Rows written
+   before kind existed have none, and are clients, which is what they were. */
+function clientAccounts() { return state.clients.filter(c => (c.kind || 'client') === 'client'); }
+function supplierAccounts() { return state.clients.filter(c => c.kind === 'supplier'); }
+function accountName(id) {
+  const c = state.clients.find(x => x.id === id);
+  return c ? c.name : '';
+}
+
 function clientHintText(d) {
   if (!d.client_id) return 'Our own stock. Clients cannot see it.';
-  const c = state.clients.find(x => x.id === d.client_id);
-  return 'Shows on ' + (c ? c.name : 'that client') + "'s own sign-in: name, photo and quantity only — never cost, supplier or rack.";
+  return 'Shows on ' + (accountName(d.client_id) || 'that client') + "'s own sign-in: name, photo and quantity only — never cost, supplier or rack.";
+}
+
+/* What a supplier says is on its way, shown against the item so nobody
+   orders the same drum twice. Only what is still coming: an order that has
+   arrived is already in the count, and one that was cancelled is noise. */
+function incomingFor(productId) {
+  return state.supplyOrders.filter(o => o.product_id === productId && o.status === 'coming');
+}
+
+function incomingRowHtml(p) {
+  const coming = incomingFor(p.id);
+  if (!coming.length) return '';
+  const today = new Date(new Date().toDateString());
+  return '<div class="field-row field-row-stack"><span class="fname">On the way</span>' +
+    '<div class="loc-lines">' + coming.map(o => {
+      const late = o.eta && new Date(o.eta) < today;
+      return '<div class="loc-line">' +
+        '<span class="loc-line-code">' + fmtQty(o.qty) + ' ' + escapeHtml(p.unit || 'ea') + '</span>' +
+        '<span class="loc-line-note' + (late ? ' overdue' : '') + '">' +
+          (o.eta ? (late ? 'was due ' : 'due ') + escapeHtml(fmtDate(o.eta)) : 'no date given') +
+          (o.note ? ' · ' + escapeHtml(o.note) : '') +
+        '</span></div>';
+    }).join('') + '</div></div>';
+}
+
+function supplierHintText(d) {
+  if (!d.supplier_id) return 'No supplier sees this item.';
+  return accountName(d.supplier_id) + ' can see how much is left and what has been booked out, so they know when to send more. Never cost, prices or any other supplier.';
 }
 
 function renderItemForm() {
@@ -3509,10 +3557,22 @@ function renderItemForm() {
     '<div class="form-section-label">Whose stock is this?</div>' +
     '<div class="pill-grid" style="margin-bottom:4px;">' +
       '<button class="pill-btn ' + (!d.client_id ? 'active' : '') + '" data-setclient="" type="button">Ours</button>' +
-      state.clients.map(c =>
+      clientAccounts().map(c =>
         '<button class="pill-btn ' + (d.client_id === c.id ? 'active' : '') + '" data-setclient="' + escapeHtml(c.id) + '" type="button">' + escapeHtml(c.name) + '</button>').join('') +
     '</div>' +
     '<div class="form-hint" id="clientHint">' + clientHintText(d) + '</div>' +
+
+    // Separate from the above on purpose: this says who supplies the item,
+    // not who owns it. Only shown once a supplier account exists.
+    (supplierAccounts().length
+      ? '<div class="form-section-label">Which supplier can watch this?</div>' +
+        '<div class="pill-grid" style="margin-bottom:4px;">' +
+          '<button class="pill-btn ' + (!d.supplier_id ? 'active' : '') + '" data-setsupplier="" type="button">None</button>' +
+          supplierAccounts().map(c =>
+            '<button class="pill-btn ' + (d.supplier_id === c.id ? 'active' : '') + '" data-setsupplier="' + escapeHtml(c.id) + '" type="button">' + escapeHtml(c.name) + '</button>').join('') +
+        '</div>' +
+        '<div class="form-hint" id="supplierHint">' + supplierHintText(d) + '</div>'
+      : '') +
 
     '<div class="form-section-label">Group &amp; category</div>' +
     '<div class="form-card">' + formFieldHtml('fGroup', 'Group', d.group_name, { placeholder: 'e.g. Timber' }) + '</div>' +
@@ -3617,6 +3677,13 @@ function renderItemForm() {
       x.classList.toggle('active', (x.getAttribute('data-setclient') || '') === d.client_id));
     const hint = $('clientHint');
     if (hint) hint.textContent = clientHintText(d);
+  }));
+  sheetEl.querySelectorAll('[data-setsupplier]').forEach(b => b.addEventListener('click', () => {
+    d.supplier_id = b.getAttribute('data-setsupplier') || '';
+    sheetEl.querySelectorAll('[data-setsupplier]').forEach(x =>
+      x.classList.toggle('active', (x.getAttribute('data-setsupplier') || '') === d.supplier_id));
+    const hint = $('supplierHint');
+    if (hint) hint.textContent = supplierHintText(d);
   }));
   wireGroupSuggest(d, groups);
   sheetEl.querySelectorAll('[data-dormant]').forEach(b => b.addEventListener('click', () => {
@@ -4256,6 +4323,7 @@ async function saveItem() {
       bulk_location: (d.bulk_location || '').trim() || null,
       place_of_use: (d.place_of_use || '').trim() || null,
       client_id: d.client_id || null,
+      supplier_id: d.supplier_id || null,
       pref_supplier: (d.pref_supplier || '').trim() || null,
       pref_moq: formatAmountUnit(d.pref_moq_qty, d.pref_moq_unit),
       pref_lead_time: formatAmountUnit(d.pref_lead_qty, d.pref_lead_unit),

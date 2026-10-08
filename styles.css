@@ -394,6 +394,7 @@ img { display: block; }
   color: var(--sys-teal); font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
 }
 .loc-line-note { color: var(--label-secondary); font-size: 14px; }
+.loc-line-note.overdue { color: var(--sys-red); font-weight: 600; }
 
 /* Groups already in use, under the Group box. Deliberately unlike the
    category pills below them, which these used to be mistaken for. */
