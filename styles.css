@@ -930,6 +930,47 @@ img { display: block; }
 /* ---------- Client summary ---------- */
 /* Two across on a phone, more as the screen allows: a client wants to scan
    photos and numbers, not read a table. */
+/* ---------- Supplier view ----------
+   A list rather than the client's grid of cards: a supplier is reading
+   numbers against each other — what is left, how fast it went, what is
+   already on its way — and those line up far better in rows. */
+.sup-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.sup-row {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px;
+  background: var(--bg-elevated-2); border-radius: var(--r-lg);
+  border-left: 3px solid transparent;
+}
+.sup-row.low { border-left-color: var(--sys-orange); }
+.sup-row.out { border-left-color: var(--sys-red); }
+.sup-photo {
+  width: 52px; height: 52px; flex: 0 0 52px; border-radius: var(--r-md);
+  object-fit: cover; background: var(--bg-elevated-3); display: block;
+}
+.sup-photo-ph { display: flex; align-items: center; justify-content: center; color: var(--label-tertiary); }
+.sup-main { flex: 1; min-width: 0; }
+.sup-name { font-size: 16px; font-weight: 700; line-height: 1.25; }
+.sup-meta {
+  display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 3px;
+  font-size: 12.5px; color: var(--label-tertiary);
+}
+.sup-sku { font-family: ui-monospace, Menlo, monospace; }
+.sup-coming { color: var(--sys-green); font-weight: 600; }
+.sup-qty { text-align: right; flex: 0 0 auto; }
+.sup-qty-n { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.sup-row.low .sup-qty-n { color: var(--sys-orange); }
+.sup-row.out .sup-qty-n { color: var(--sys-red); }
+.sup-qty-u { font-size: 12px; color: var(--label-tertiary); }
+.sup-qty-min { font-size: 11.5px; color: var(--label-tertiary); margin-top: 2px; }
+
+.sup-status {
+  display: inline-block; padding: 3px 10px; border-radius: var(--r-pill);
+  font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.sup-status.coming    { background: rgba(10,132,255,0.18);  color: var(--sys-blue); }
+.sup-status.arrived   { background: rgba(48,209,88,0.18);   color: var(--sys-green); }
+.sup-status.cancelled { background: rgba(255,255,255,0.08); color: var(--label-tertiary); }
+.sup-status.late      { background: rgba(255,69,58,0.18);   color: var(--sys-red); }
+
 .client-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 12px; margin-bottom: 8px;

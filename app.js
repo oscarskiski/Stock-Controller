@@ -294,11 +294,22 @@ const state = {
      into the app — a client following the link is not. */
   forceSignIn: false,
   signInFrom: '',
+  /* Supplier view: their stock, their movement log, their orders. */
+  supplierStock: [],
+  supplierMoves: [],
+  supplyOrders: [],
+  supplierTab: 'stock',
   /* True only until the very first account exists. */
   needsSetup: false
 };
 
 function isClientView() { return !!(state.profile && state.profile.role === 'client'); }
+/** A supplier sells to us; a client stores with us. They sign in to watch
+    how fast their own lines move and to say what they have sent, and they
+    see neither the yard nor each other. */
+function isSupplierView() { return !!(state.profile && state.profile.role === 'supplier'); }
+/** Anyone from outside the business. Neither gets the staff furniture. */
+function isOutsideView() { return isClientView() || isSupplierView(); }
 /** The boss. The only one who can create or remove accounts; everyone else
     at the factory sees the same stock but cannot hand out logins. */
 function isAdmin() { return !!(state.profile && state.profile.role === 'admin'); }
@@ -352,7 +363,18 @@ function movementProductName(m) {
 async function refresh(showSpinner) {
   if (showSpinner) { state.loading = true; render(); }
   try {
-    if (isClientView()) {
+    if (isSupplierView()) {
+      // Two views and one table, which is everything a supplier is allowed.
+      // Asking for products or movements directly would come back refused.
+      const [stock, moves, orders] = await Promise.all([
+        DB.listSupplierStock(), DB.listSupplierMovements(200), DB.listSupplyOrders()
+      ]);
+      state.supplierStock = stock || [];
+      state.supplierMoves = moves || [];
+      state.supplyOrders = orders || [];
+      state.products = []; state.movements = []; state.people = [];
+      state.reorderCards = []; state.pickLists = [];
+    } else if (isClientView()) {
       // A client may read their own products and nothing else — asking for the
       // team list or the movement log would simply come back empty or refused.
       state.products = (await DB.listProducts()) || [];
@@ -409,19 +431,29 @@ function renderHeader() {
   const scan = $('navScan'), gear = $('navGear');
 
   if (mode !== 'staff') {
-    // A client gets their own name in the title and one button: their account.
-    const clientName = (state.profile && state.profile.clients && state.profile.clients.name) || '';
+    // A client or a supplier gets their own company in the title and one
+    // button: their account. Both read their name off the same clients row.
+    const outsideName = (state.profile && state.profile.clients && state.profile.clients.name) || '';
+    const outside = mode === 'client' || mode === 'supplier';
     const heldCount = mode === 'client' ? myClientProducts().length : 0;
-    $('navTitle').textContent = mode === 'client' ? (clientName || 'Your stock') : (CFG.SITE_NAME || 'Yard Stock');
-    $('navSub').textContent = mode === 'client'
-      ? heldCount + ' item' + (heldCount === 1 ? '' : 's') + ' held for you'
+    const lowCount = mode === 'supplier'
+      ? state.supplierStock.filter(p => num(p.min_qty) > 0 && num(p.qty) <= num(p.min_qty)).length
+      : 0;
+
+    $('navTitle').textContent = outside ? (outsideName || 'Your stock') : (CFG.SITE_NAME || 'Yard Stock');
+    $('navSub').textContent =
+      mode === 'client' ? heldCount + ' item' + (heldCount === 1 ? '' : 's') + ' held for you'
+      : mode === 'supplier'
+        ? state.supplierStock.length + ' line' + (state.supplierStock.length === 1 ? '' : 's') +
+          (lowCount ? ' · ' + lowCount + ' need' + (lowCount === 1 ? 's' : '') + ' ordering' : ' · all stocked')
       : 'Sign in to continue';
-    // The whole header is hidden on the sign-in and setup screens anyway; a
-    // client keeps only the account button.
+
+    // The whole header is hidden on the sign-in and setup screens anyway;
+    // from outside the business only the account button stays.
     scan.hidden = true;
     gear.hidden = true;
-    me.hidden = mode !== 'client';
-    if (mode === 'client') me.innerHTML = '<span class="avatar">' + escapeHtml(initials(clientName || '?')) + '</span><span class="mename">Account</span>';
+    me.hidden = !outside;
+    if (outside) me.innerHTML = '<span class="avatar">' + escapeHtml(initials(outsideName || '?')) + '</span><span class="mename">Account</span>';
     return;
   }
   scan.hidden = false; gear.hidden = false; me.hidden = false;
@@ -484,6 +516,7 @@ function appMode() {
   // wants the sign-in screen — a client following their link, or the boss
   // checking a login from Settings.
   if (!DB.signedIn && (CFG.REQUIRE_LOGIN || state.forceSignIn)) return 'signin';
+  if (isSupplierView()) return 'supplier';
   if (isClientView()) return 'client';
   return 'staff';
 }
@@ -513,6 +546,13 @@ function render() {
     el.innerHTML = connectionBannerHtml() + clientScreenHtml();
     wireBanner(el);
     wireClient(el);
+    return;
+  }
+
+  if (mode === 'supplier') {
+    el.innerHTML = connectionBannerHtml() + supplierScreenHtml();
+    wireBanner(el);
+    wireSupplier(el);
     return;
   }
 
@@ -744,6 +784,290 @@ function clientScreenHtml() {
 
 function wireClient(el) {
   wireSearch(el);
+}
+
+/* ===================== SUPPLIER view =====================
+   What a supplier needs is one question — how fast is this going, and have
+   I sent enough — so the screen answers it in three tabs: what is on the
+   shelf, what has left it, and what they have sent.
+
+   Everything shown here comes from supplier_stock and supplier_movements,
+   which carry only the columns a supplier may see. No cost, no prices, no
+   other supplier, nobody's name. */
+const SUPPLIER_TABS = [['stock', 'Stock'], ['log', 'Going out'], ['orders', 'My orders']];
+
+/** Units out over a window, which is the number that says "send more". */
+function supplierUsage(productId, days) {
+  const since = Date.now() - days * 86400000;
+  return state.supplierMoves.reduce((n, m) => {
+    if (m.product_id !== productId) return n;
+    if (new Date(m.created_at).getTime() < since) return n;
+    const d = num(m.delta);
+    // Only stock leaving counts as use. A correction is not consumption.
+    return (d < 0 && m.reason !== 'set') ? n + Math.abs(d) : n;
+  }, 0);
+}
+
+function supplierScreenHtml() {
+  const tab = state.supplierTab || 'stock';
+  let html =
+    '<div class="segmented" style="margin:12px 0 14px;">' +
+      SUPPLIER_TABS.map(([k, label]) =>
+        '<button class="seg-btn ' + (tab === k ? 'active' : '') + '" data-stab="' + k + '" type="button">' +
+          label + '</button>').join('') +
+    '</div>';
+
+  if (tab === 'stock') html += supplierStockHtml();
+  else if (tab === 'log') html += supplierLogHtml();
+  else html += supplierOrdersHtml();
+  return html;
+}
+
+function supplierStockHtml() {
+  const list = state.supplierStock;
+  if (!list.length) {
+    return '<div class="group"><div class="empty-note">Nothing is linked to your account yet. ' +
+      escapeHtml(CFG.SITE_NAME || 'The store') + ' decides which products you can see.</div></div>';
+  }
+
+  return '<div class="sup-list">' + list.map(p => {
+    const qty = num(p.qty), min = num(p.min_qty);
+    const low = min > 0 && qty <= min;
+    const out = qty <= 0;
+    const used = supplierUsage(p.id, 30);
+    // Weeks of cover at the last month's rate. The honest answer to "when
+    // will they need more", and blank when nothing has moved.
+    const perWeek = used / (30 / 7);
+    const weeks = perWeek > 0 ? (qty / perWeek) : null;
+    const coming = state.supplyOrders
+      .filter(o => o.product_id === p.id && o.status === 'coming')
+      .reduce((n, o) => n + num(o.qty), 0);
+
+    return '<div class="sup-row' + (out ? ' out' : low ? ' low' : '') + '">' +
+      (p.photo_url
+        ? '<img class="sup-photo" src="' + escapeHtml(p.photo_url) + '" alt="">'
+        : '<div class="sup-photo sup-photo-ph">' + I.box + '</div>') +
+      '<div class="sup-main">' +
+        '<div class="sup-name">' + escapeHtml(p.name) + '</div>' +
+        '<div class="sup-meta">' +
+          (p.code ? '<span class="sup-sku">' + escapeHtml(p.code) + '</span>' : '') +
+          '<span>' + fmtQty(used) + ' ' + escapeHtml(p.unit || 'ea') + ' out in 30 days</span>' +
+          (weeks != null ? '<span>' + (weeks < 1 ? 'under a week' : Math.round(weeks) + ' weeks') + ' left at that rate</span>' : '') +
+          (coming > 0 ? '<span class="sup-coming">' + fmtQty(coming) + ' on the way</span>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="sup-qty">' +
+        '<div class="sup-qty-n">' + fmtQty(qty) + '</div>' +
+        '<div class="sup-qty-u">' + escapeHtml(p.unit || 'ea') + '</div>' +
+        (min > 0 ? '<div class="sup-qty-min">min ' + fmtQty(min) + '</div>' : '') +
+      '</div>' +
+    '</div>';
+  }).join('') + '</div>' +
+  '<div class="status-line">Stock as at ' +
+    (DB.lastSync ? escapeHtml(fmtWhen(new Date(DB.lastSync).toISOString())) : 'now') + '.</div>';
+}
+
+function supplierLogHtml() {
+  // Only stock leaving: a supplier is judging consumption, and book-ins are
+  // mostly their own deliveries arriving, which they already know about.
+  const outs = state.supplierMoves.filter(m => num(m.delta) < 0 && m.reason !== 'set');
+  if (!outs.length) {
+    return '<div class="group"><div class="empty-note">Nothing has been booked out yet.</div></div>';
+  }
+  // The same row furniture the staff log uses, rather than new classes that
+  // would need their own styling and drift away from it.
+  return '<div class="group">' + outs.map(m =>
+    '<div class="row">' +
+      '<span class="act-delta out">' + fmtQty(num(m.delta)) + '</span>' +
+      '<div class="row-body">' +
+        '<div class="row-title">' + escapeHtml(m.product_name || '') + '</div>' +
+        '<div class="row-meta">' + escapeHtml(fmtWhen(m.created_at)) +
+          ' <span style="opacity:.5">·</span> ' + fmtQty(m.qty_after) + ' ' +
+          escapeHtml(m.unit || 'ea') + ' left</div>' +
+      '</div>' +
+    '</div>').join('') + '</div>';
+}
+
+function supplierOrdersHtml() {
+  const orders = state.supplyOrders;
+  let html =
+    '<div class="group"><div class="empty-note" style="padding-bottom:0;">Tell ' +
+      escapeHtml(CFG.SITE_NAME || 'the store') +
+      ' what you have sent and when it should arrive, so nobody orders twice.</div>' +
+      '<div class="field-row" data-neworder style="cursor:pointer;">' +
+        '<span class="fname" style="color:var(--sys-blue);">' + I.plus + ' Record an order</span>' +
+      '</div>' +
+    '</div>';
+
+  if (!orders.length) {
+    html += '<div class="group"><div class="empty-note">Nothing recorded yet.</div></div>';
+    return html;
+  }
+
+  html += '<div class="group">' + orders.map(o => {
+    const name = (o.products && o.products.name) || productNameFromStock(o.product_id) || 'An item';
+    const late = o.status === 'coming' && o.eta && new Date(o.eta) < new Date(new Date().toDateString());
+    return '<div class="row" data-editorder="' + escapeHtml(o.id) + '" style="cursor:pointer;">' +
+      '<div class="row-body">' +
+        '<div class="row-title">' + escapeHtml(name) + '</div>' +
+        '<div class="row-meta">' +
+          (o.qty ? fmtQty(o.qty) + ' · ' : '') +
+          (o.ordered_on ? 'ordered ' + escapeHtml(fmtDate(o.ordered_on)) : 'no order date') +
+          (o.eta ? ' · due ' + escapeHtml(fmtDate(o.eta)) : '') +
+          (o.note ? ' · ' + escapeHtml(o.note) : '') +
+        '</div>' +
+      '</div>' +
+      '<span class="row-trail">' +
+        '<span class="sup-status ' + escapeHtml(o.status) + (late ? ' late' : '') + '">' +
+          (late ? 'overdue' : o.status === 'coming' ? 'on the way' : o.status === 'arrived' ? 'arrived' : 'cancelled') +
+        '</span>' +
+      '</span>' +
+    '</div>';
+  }).join('') + '</div>';
+  return html;
+}
+
+function productNameFromStock(id) {
+  const p = state.supplierStock.filter(x => x.id === id)[0];
+  return p ? p.name : '';
+}
+
+/** Dates on these are plain days, not timestamps — fmtWhen would read them
+    as midnight UTC and could show yesterday. */
+function fmtDate(d) {
+  if (!d) return '';
+  const parts = String(d).slice(0, 10).split('-');
+  if (parts.length !== 3) return String(d);
+  const dt = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+  return dt.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function wireSupplier(el) {
+  el.querySelectorAll('[data-stab]').forEach(b => b.addEventListener('click', () => {
+    state.supplierTab = b.getAttribute('data-stab');
+    render();
+  }));
+  const add = el.querySelector('[data-neworder]');
+  if (add) add.addEventListener('click', () => openSupplyOrderSheet(null));
+  el.querySelectorAll('[data-editorder]').forEach(r => r.addEventListener('click', () => {
+    const o = state.supplyOrders.filter(x => x.id === r.getAttribute('data-editorder'))[0];
+    if (o) openSupplyOrderSheet(o);
+  }));
+}
+
+/* The supplier's own record of a delivery: what, how much, when it left and
+   when it should land. Deliberately not a stock movement — nothing has
+   reached the racks yet, and booking it in early would make the count a lie.
+   Someone at the store books it in when it actually turns up. */
+let supplyDraft = null;
+
+function openSupplyOrderSheet(existing) {
+  const o = existing || {};
+  supplyDraft = {
+    id: o.id || null,
+    product_id: o.product_id || (state.supplierStock[0] || {}).id || '',
+    qty: o.qty == null ? '' : o.qty,
+    ordered_on: (o.ordered_on || new Date().toISOString().slice(0, 10)).slice(0, 10),
+    eta: (o.eta || '').slice(0, 10),
+    note: o.note || '',
+    status: o.status || 'coming'
+  };
+  renderSupplyOrderSheet();
+  openSheet();
+}
+
+function renderSupplyOrderSheet() {
+  const d = supplyDraft;
+  const editing = !!d.id;
+  const statuses = [['coming', 'On the way'], ['arrived', 'Arrived'], ['cancelled', 'Cancelled']];
+
+  sheetEl.innerHTML =
+    '<div class="sheet-handle"></div>' +
+    '<div class="sheet-title">' + (editing ? 'Update order' : 'Record an order') + '</div>' +
+    '<div class="sheet-sub">This does not change the stock count. Someone books it in when it arrives.</div>' +
+    '<div class="form-card">' +
+      '<label class="form-field"><div class="ff-label">Product</div>' +
+        '<select id="soProduct" data-sf="product_id">' +
+          state.supplierStock.map(p =>
+            '<option value="' + escapeHtml(p.id) + '"' + (d.product_id === p.id ? ' selected' : '') + '>' +
+              escapeHtml(p.name) + '</option>').join('') +
+        '</select></label>' +
+      '<label class="form-field"><div class="ff-label">How much</div>' +
+        '<input id="soQty" data-sf="qty" type="number" inputmode="decimal" min="0" value="' + escapeHtml(d.qty) + '" placeholder="0"></label>' +
+      '<label class="form-field"><div class="ff-label">Ordered / sent on</div>' +
+        '<input id="soOrdered" data-sf="ordered_on" type="date" value="' + escapeHtml(d.ordered_on) + '"></label>' +
+      '<label class="form-field"><div class="ff-label">Expected to arrive</div>' +
+        '<input id="soEta" data-sf="eta" type="date" value="' + escapeHtml(d.eta) + '"></label>' +
+      '<label class="form-field"><div class="ff-label">Anything else</div>' +
+        '<textarea id="soNote" data-sf="note" rows="2" style="resize:none;" placeholder="Batch, carrier, part shipment…">' + escapeHtml(d.note) + '</textarea></label>' +
+    '</div>' +
+    (editing
+      ? '<div class="segmented" style="margin-top:10px;">' +
+          statuses.map(([k, label]) =>
+            '<button class="seg-btn ' + (d.status === k ? 'active' : '') + '" data-sostatus="' + k + '" type="button">' + label + '</button>').join('') +
+        '</div>'
+      : '') +
+    '<div class="sheet-actions">' +
+      '<button class="sheet-cancel" data-close type="button">Cancel</button>' +
+      '<button class="sheet-save" data-sosave type="button">' + (editing ? 'Save' : 'Record it') + '</button>' +
+    '</div>' +
+    (editing
+      ? '<div class="field-row" data-sodel style="cursor:pointer;justify-content:center;">' +
+          '<span class="fname" style="color:var(--sys-red);">Delete this order</span></div>'
+      : '');
+
+  sheetEl.querySelectorAll('[data-sf]').forEach(e => e.addEventListener('input', () => {
+    d[e.getAttribute('data-sf')] = e.value;
+  }));
+  sheetEl.querySelectorAll('[data-sostatus]').forEach(b => b.addEventListener('click', () => {
+    d.status = b.getAttribute('data-sostatus');
+    renderSupplyOrderSheet();
+  }));
+  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+  sheetEl.querySelector('[data-sosave]').addEventListener('click', saveSupplyOrder);
+  const del = sheetEl.querySelector('[data-sodel]');
+  if (del) del.addEventListener('click', deleteSupplyOrder);
+}
+
+async function saveSupplyOrder() {
+  const d = supplyDraft;
+  const btn = sheetEl.querySelector('[data-sosave]');
+  if (!d.product_id) { toast('Pick a product first'); return; }
+  btn.disabled = true; btn.textContent = 'Saving…';
+  const payload = {
+    supplier_id: state.profile && state.profile.client_id,
+    product_id: d.product_id,
+    qty: d.qty === '' ? null : num(d.qty),
+    ordered_on: d.ordered_on || null,
+    eta: d.eta || null,
+    note: (d.note || '').trim() || null,
+    status: d.status,
+    created_by: (state.profile && state.profile.label) || ''
+  };
+  try {
+    if (d.id) await DB.updateSupplyOrder(d.id, payload);
+    else await DB.createSupplyOrder(payload);
+    closeSheet();
+    await refresh();
+    toast(d.id ? 'Order updated' : 'Order recorded', 'good');
+  } catch (e) {
+    btn.disabled = false; btn.textContent = d.id ? 'Save' : 'Record it';
+    toast(e && e.offline ? 'No connection — not saved' : (e.message || 'Could not save'), 'bad');
+  }
+}
+
+async function deleteSupplyOrder() {
+  const d = supplyDraft;
+  if (!d.id) return;
+  if (!confirm('Delete this order? The stock count is not affected.')) return;
+  try {
+    await DB.removeSupplyOrder(d.id);
+    closeSheet();
+    await refresh();
+    toast('Order deleted', 'good');
+  } catch (e) {
+    toast(e.message || 'Could not delete', 'bad');
+  }
 }
 
 function openClientAccountSheet() {
@@ -1795,8 +2119,9 @@ function clientsSettingsRowHtml() {
 }
 
 function openSettingsSheet() {
-  // A client has no settings. Their only control is the account sheet.
-  if (isClientView()) { openClientAccountSheet(); return; }
+  // Nobody outside the business has settings. Their only control is the
+  // account sheet.
+  if (isOutsideView()) { openClientAccountSheet(); return; }
   const mode = DB.mode === 'supabase' ? 'Shared (Supabase)' : 'Local to this device';
   const sync = DB.lastSync ? fmtWhen(new Date(DB.lastSync).toISOString()) : '—';
 
@@ -2812,7 +3137,7 @@ function scannerSupported() {
 
 function openScanSheet() {
   // Scanning lands on a product detail sheet full of costs and suppliers.
-  if (isClientView()) return;
+  if (isOutsideView()) return;
   renderScanSheet();
   openSheet();
   if (scannerSupported()) startScanner();
@@ -4118,11 +4443,11 @@ function renderPickProduct(dir) {
 
 /* ===================== Init ===================== */
 $('fabAdd').innerHTML = I.plus;
-$('fabAdd').addEventListener('click', () => { if (!state.loading && !isClientView()) openFabSheet(); });
+$("fabAdd").addEventListener("click", () => { if (!state.loading && !isOutsideView()) openFabSheet(); });
 $('navMe').addEventListener('click', () => {
   // The login already says who you are; only a device with no account on it
   // still has to ask.
-  if (isClientView()) openClientAccountSheet();
+  if (isOutsideView()) openClientAccountSheet();
   else if (DB.signedIn) openMyAccountSheet();
   else openPersonSheet();
 });
@@ -4158,7 +4483,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && !s
   const deepLinkId = new URLSearchParams(location.search).get('item');
   if (deepLinkId) history.replaceState(null, '', location.pathname);
 
-  if (isClientView()) {
+  if (isOutsideView()) {
     // Nothing to ask a client: no name to pick, and cards deep-link to a
     // detail sheet full of costs and suppliers they should not see.
     bootServiceWorker();

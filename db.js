@@ -215,6 +215,35 @@
     },
 
     async listReorderCards() { await this.init(); return this.cache.reorder_cards; },
+
+    /* Local mode has no sign-in and so nobody is a supplier. These exist so
+       the supplier screens can be opened and looked at without a server,
+       and so nothing throws if they are reached by accident. */
+    async listSupplierStock() { await this.init(); return []; },
+    async listSupplierMovements() { await this.init(); return []; },
+    async listSupplyOrders() { await this.init(); return this.cache.supply_orders || []; },
+    async createSupplyOrder(o) {
+      await this.init();
+      this.cache.supply_orders = this.cache.supply_orders || [];
+      const row = Object.assign({ id: uuid(), created_at: nowIso(), updated_at: nowIso(), status: 'coming' }, o);
+      this.cache.supply_orders.push(row);
+      await this.persist('supply_orders');
+      return row;
+    },
+    async updateSupplyOrder(id, patch) {
+      await this.init();
+      const row = (this.cache.supply_orders || []).find(x => x.id === id);
+      if (!row) throw new Error('Order not found');
+      Object.assign(row, patch, { updated_at: nowIso() });
+      await this.persist('supply_orders');
+      return row;
+    },
+    async removeSupplyOrder(id) {
+      await this.init();
+      this.cache.supply_orders = (this.cache.supply_orders || []).filter(x => x.id !== id);
+      await this.persist('supply_orders');
+      return true;
+    },
     async createReorderCard(c) {
       await this.init();
       if (this.cache.reorder_cards.some(x => x.product_id === c.product_id && x.status !== 'received')) {
@@ -560,6 +589,36 @@
       return this.base + '/storage/v1/object/public/' + bucket + '/' + path;
     },
 
+    /* The two supplier views. Both are empty for anybody who is not a
+       supplier — their WHERE clause is the gate — so there is nothing to
+       check here beyond asking. */
+    async listSupplierStock() {
+      return await this.rest('supplier_stock?select=*&order=name.asc');
+    },
+    async listSupplierMovements(limit) {
+      return await this.rest('supplier_movements?select=*&order=created_at.desc&limit=' + (limit || 200));
+    },
+    async listSupplyOrders() {
+      return await this.rest('supply_orders?select=*,products(name,unit)&order=created_at.desc&limit=200');
+    },
+    async createSupplyOrder(o) {
+      const rows = await this.rest('supply_orders', {
+        method: 'POST', body: o, headers: { 'Prefer': 'return=representation' }
+      });
+      return rows && rows[0];
+    },
+    async updateSupplyOrder(id, patch) {
+      const rows = await this.rest('supply_orders?id=eq.' + id, {
+        method: 'PATCH', body: Object.assign({}, patch, { updated_at: nowIso() }),
+        headers: { 'Prefer': 'return=representation' }
+      });
+      return rows && rows[0];
+    },
+    async removeSupplyOrder(id) {
+      await this.rest('supply_orders?id=eq.' + id, { method: 'DELETE' });
+      return true;
+    },
+
     async listReorderCards() {
       return await this.rest('reorder_cards?select=*,products(name,unit,location,photo_url)&order=created_at.desc');
     },
@@ -778,7 +837,17 @@
     addPickItems(id, lines)    { return this._write(() => impl.addPickItems(id, lines)); },
     updatePickItem(id, p)      { return this._write(() => impl.updatePickItem(id, p)); },
     removePickItem(id)         { return this._write(() => impl.removePickItem(id)); },
-    deleteReorderCard(id)      { return this._write(() => impl.deleteReorderCard(id)); }
+    deleteReorderCard(id)      { return this._write(() => impl.deleteReorderCard(id)); },
+
+    /* A supplier reads two views rather than the tables behind them. A policy
+       chooses rows, never columns, and a supplier allowed to read their own
+       product rows would read cost and every price with them. */
+    listSupplierStock()        { return this._read('supplier_stock', () => impl.listSupplierStock()); },
+    listSupplierMovements(n)   { return this._read('supplier_moves', () => impl.listSupplierMovements(n)); },
+    listSupplyOrders()         { return this._read('supply_orders', () => impl.listSupplyOrders()); },
+    createSupplyOrder(o)       { return this._write(() => impl.createSupplyOrder(o)); },
+    updateSupplyOrder(id, p)   { return this._write(() => impl.updateSupplyOrder(id, p)); },
+    removeSupplyOrder(id)      { return this._write(() => impl.removeSupplyOrder(id)); }
   };
 
   window.DB = DB;
