@@ -539,7 +539,11 @@
           method: 'POST',
           headers: {
             'apikey': this.key,
-            'Authorization': 'Bearer ' + this.key,
+            // The session's token when signed in, as everywhere else. The anon
+            // key was hardcoded here: harmless while storage accepted anon
+            // writes, but the access cutover limits them to signed-in users,
+            // and every photo upload would have failed from the moment it ran.
+            'Authorization': 'Bearer ' + (Session.token || this.key),
             'Content-Type': 'image/jpeg',
             'x-upsert': 'true'
           },

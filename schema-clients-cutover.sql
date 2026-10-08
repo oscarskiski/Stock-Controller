@@ -77,7 +77,7 @@ create policy reorder_cards_staff on public.reorder_cards for all to authenticat
 -- or removes a client.
 -- ---------------------------------------------------------
 create policy clients_read  on public.clients for select to authenticated
-  using (public.is_staff() or id = public.my_client_id());
+  using (public.is_staff() or id = public.my_client_id() or id = public.my_supplier_id());
 create policy clients_admin on public.clients for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
 
@@ -94,12 +94,65 @@ create policy profiles_admin on public.profiles for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
 
 -- ---------------------------------------------------------
+-- Suppliers
+-- ---------------------------------------------------------
+-- A supplier watches how fast their own lines move so they know when to
+-- send more. They are outside the business, so they get less than a
+-- client does — and crucially, less of each ROW.
+--
+-- Row-level security cannot do that. A policy decides which rows come
+-- back, never which columns, so a supplier allowed to read their product
+-- rows would read cost, both suppliers and every price with them. Views
+-- are the only way to hand over some columns and not others.
+--
+-- These views are security definer (the default), so they see past the
+-- policies above; their WHERE clause is the gate. my_supplier_id()
+-- returns null for anyone who is not a supplier, and "= null" matches no
+-- row, so to everybody else they are simply empty.
+drop view if exists public.supplier_stock;
+create view public.supplier_stock as
+  select p.id, p.name, p.code, p.unit, p.qty, p.min_qty, p.photo_url,
+         p.supplier_id, p.updated_at
+  from public.products p
+  where p.archived = false
+    and p.supplier_id is not null
+    and p.supplier_id = public.my_supplier_id();
+
+-- The booking-out log for their lines. No person and no note: who moved
+-- it and why is the factory's business, and a note can carry anything.
+drop view if exists public.supplier_movements;
+create view public.supplier_movements as
+  select m.id, m.product_id, p.name as product_name, p.unit,
+         m.delta, m.qty_after, m.reason, m.created_at
+  from public.movements m
+  join public.products p on p.id = m.product_id
+  where p.supplier_id is not null
+    and p.supplier_id = public.my_supplier_id();
+
+revoke all on public.supplier_stock, public.supplier_movements from anon;
+grant select on public.supplier_stock, public.supplier_movements to authenticated;
+
+-- What the supplier says they have sent. Theirs to write and to correct,
+-- ours to read — every column on these rows is already their own, so a
+-- policy is enough here and no view is needed.
+drop policy if exists supply_orders_all      on public.supply_orders;
+drop policy if exists supply_orders_staff    on public.supply_orders;
+drop policy if exists supply_orders_supplier on public.supply_orders;
+
+create policy supply_orders_staff on public.supply_orders for all to authenticated
+  using (public.is_staff()) with check (public.is_staff());
+create policy supply_orders_supplier on public.supply_orders for all to authenticated
+  using (supplier_id is not null and supplier_id = public.my_supplier_id())
+  with check (supplier_id is not null and supplier_id = public.my_supplier_id());
+
+-- ---------------------------------------------------------
 -- Take the public key's access away. Everything above is academic until
 -- this runs: the anon key is in config.js, served to every visitor.
 -- ---------------------------------------------------------
 revoke all on public.people, public.products, public.movements,
               public.reorder_cards, public.clients, public.profiles,
-              public.pick_lists, public.pick_list_items from anon;
+              public.pick_lists, public.pick_list_items,
+              public.supply_orders from anon;
 revoke execute on function public.apply_movement(uuid, numeric, text, text, text) from anon;
 
 -- Photos stay world-readable: they are shown in <img> tags, which cannot
