@@ -43,5 +43,13 @@ window.CONFIG = {
 
   // Shown next to Cost / Price fields in the item form, e.g. 'R', '£', '$'.
   // Leave blank to show plain numbers with no currency symbol.
-  CURRENCY_SYMBOL: 'R'
+  CURRENCY_SYMBOL: 'R',
+
+  // The public half of the VAPID pair push notifications are signed with.
+  // Public by design: it is handed to the browser when a phone subscribes,
+  // and is useless without the private half, which lives only wherever the
+  // sender runs and must never appear in this file.
+  //
+  // Leave blank to turn push off — nothing is then offered to anyone.
+  VAPID_PUBLIC_KEY: 'BBbz0SPpH58uBfMxq7AZgVn0874VHmOYXLaCX25ghfvgIfJwTh2uYa3fdTmHnqmAt90EFCSVmdy45uEtX0mmLYk'
 };

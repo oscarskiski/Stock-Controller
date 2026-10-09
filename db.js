@@ -219,6 +219,8 @@
     /* Local mode has no sign-in and so nobody is a supplier. These exist so
        the supplier screens can be opened and looked at without a server,
        and so nothing throws if they are reached by accident. */
+    async savePushSubscription() { throw new Error('Notifications need the shared database'); },
+    async removePushSubscription() { return true; },
     async listSupplierStock() { await this.init(); return []; },
     async listSupplierMovements() { await this.init(); return []; },
     async listSupplyOrders() { await this.init(); return this.cache.supply_orders || []; },
@@ -601,6 +603,21 @@
     async listSupplyOrders() {
       return await this.rest('supply_orders?select=*,products(name,unit)&order=created_at.desc&limit=200');
     },
+    /* Upsert on the endpoint: a phone that re-subscribes must replace its
+       own row, not add a second one, or every warning arrives twice. */
+    async savePushSubscription(s) {
+      const rows = await this.rest('push_subscriptions?on_conflict=endpoint', {
+        method: 'POST',
+        body: Object.assign({}, s, { last_seen: nowIso() }),
+        headers: { 'Prefer': 'resolution=merge-duplicates,return=representation' }
+      });
+      return rows && rows[0];
+    },
+    async removePushSubscription(endpoint) {
+      await this.rest('push_subscriptions?endpoint=eq.' + encodeURIComponent(endpoint), { method: 'DELETE' });
+      return true;
+    },
+
     async createSupplyOrder(o) {
       const rows = await this.rest('supply_orders', {
         method: 'POST', body: o, headers: { 'Prefer': 'return=representation' }
@@ -845,6 +862,8 @@
     listSupplierStock()        { return this._read('supplier_stock', () => impl.listSupplierStock()); },
     listSupplierMovements(n)   { return this._read('supplier_moves', () => impl.listSupplierMovements(n)); },
     listSupplyOrders()         { return this._read('supply_orders', () => impl.listSupplyOrders()); },
+    savePushSubscription(s)    { return this._write(() => impl.savePushSubscription(s)); },
+    removePushSubscription(e)  { return this._write(() => impl.removePushSubscription(e)); },
     createSupplyOrder(o)       { return this._write(() => impl.createSupplyOrder(o)); },
     updateSupplyOrder(id, p)   { return this._write(() => impl.updateSupplyOrder(id, p)); },
     removeSupplyOrder(id)      { return this._write(() => impl.removeSupplyOrder(id)); }

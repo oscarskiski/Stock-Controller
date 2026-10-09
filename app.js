@@ -1074,17 +1074,40 @@ async function deleteSupplyOrder() {
   }
 }
 
-function openClientAccountSheet() {
+async function openClientAccountSheet() {
   const name = (state.profile && state.profile.clients && state.profile.clients.name) || '';
+  const supplier = isSupplierView();
+  const shown = supplier ? state.supplierStock.length : myClientProducts().length;
+  const push = supplier ? await pushState() : 'unsupported';
+
+  // Each case says what is actually in the way. A button that quietly does
+  // nothing on an iPhone is worse than no button.
+  const pushRow = {
+    on:          ['Notifications are on', 'Turn off', 'var(--sys-red)'],
+    off:         ['Get told when stock runs low', 'Turn on', 'var(--sys-blue)'],
+    blocked:     ['Notifications are blocked in this browser’s settings', '', ''],
+    'ios-install': ['Add this app to your Home Screen first — Share, then Add to Home Screen — then notifications can be turned on', '', ''],
+    unsupported: ['', '', '']
+  }[push] || ['', '', ''];
+
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
     '<div class="sheet-title">' + escapeHtml(name || 'Your account') + '</div>' +
     '<div class="sheet-sub">Signed in as ' + escapeHtml((state.profile && state.profile.username) || 'you') + '</div>' +
     '<div class="field-group" style="margin-bottom:14px;">' +
-      '<div class="field-row"><span class="fname">Stock shown</span><span class="field-val">' + myClientProducts().length + ' item' + (myClientProducts().length === 1 ? '' : 's') + '</span></div>' +
+      '<div class="field-row"><span class="fname">' + (supplier ? 'Lines you watch' : 'Stock shown') + '</span><span class="field-val">' +
+        shown + ' item' + (shown === 1 ? '' : 's') + '</span></div>' +
       '<div class="field-row" data-refreshnow style="cursor:pointer;"><span class="fname" style="color:var(--sys-blue);">Refresh now</span><span class="field-val">' +
         (DB.lastSync ? escapeHtml(fmtWhen(new Date(DB.lastSync).toISOString())) : '—') + '</span></div>' +
     '</div>' +
+    (pushRow[0]
+      ? '<div class="field-group" style="margin-bottom:14px;">' +
+          '<div class="field-row"' + (pushRow[1] ? ' data-pushtoggle style="cursor:pointer;"' : '') + '>' +
+            '<span class="fname">' + pushRow[0] + '</span>' +
+            (pushRow[1] ? '<span class="field-val" style="color:' + pushRow[2] + ';font-weight:600;">' + pushRow[1] + '</span>' : '') +
+          '</div>' +
+        '</div>'
+      : '') +
     '<div class="sheet-actions">' +
       '<button class="sheet-cancel" data-close type="button">Close</button>' +
       '<button class="sheet-delete" data-signout type="button" style="flex:1;border-radius:var(--r-md);">Sign out</button>' +
@@ -1092,6 +1115,16 @@ function openClientAccountSheet() {
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
   sheetEl.querySelector('[data-signout]').addEventListener('click', doSignOut);
   sheetEl.querySelector('[data-refreshnow]').addEventListener('click', async () => { closeSheet(); await refresh(true); });
+  const pt = sheetEl.querySelector('[data-pushtoggle]');
+  if (pt) pt.addEventListener('click', async () => {
+    try {
+      if (push === 'on') { await disablePush(); toast('Notifications off'); }
+      else { await enablePush(); toast('Notifications on — you will hear when stock runs low', 'good'); }
+      openClientAccountSheet();
+    } catch (e) {
+      toast(e.message || 'Could not change that', 'bad');
+    }
+  });
   openSheet();
 }
 
@@ -4143,6 +4176,99 @@ function usePhotoBlob(blob) {
   if (d.photoBlob && d.photo_url && d.photo_url.startsWith('blob:')) URL.revokeObjectURL(d.photo_url);
   d.photoBlob = blob;
   d.photo_url = URL.createObjectURL(blob);
+}
+
+/* ===================== Push notifications =====================
+   So a supplier hears about a paint hitting its reorder level without
+   having to open the app and look.
+
+   Three things have to line up and any of them can be missing: the browser
+   must support push at all, the person must agree, and on an iPhone the app
+   must have been added to the home screen first — Safari refuses push to a
+   page in a tab, with no useful error. Hence checks that say which of those
+   is in the way rather than a button that silently does nothing. */
+
+function pushSupported() {
+  return typeof Notification !== 'undefined' &&
+         'serviceWorker' in navigator &&
+         'PushManager' in window &&
+         !!(CFG.VAPID_PUBLIC_KEY || '').trim();
+}
+
+/** iOS grants push only to a home-screen app, never to a Safari tab. */
+function iosNeedsInstall() {
+  const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const installed = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  return ios && !installed;
+}
+
+/** The VAPID key travels as base64url text and has to reach PushManager as
+    bytes; it is rejected outright in any other shape. */
+function urlBase64ToUint8Array(base64) {
+  const pad = '='.repeat((4 - base64.length % 4) % 4);
+  const raw = atob((base64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+function bufToB64Url(buf) {
+  const bytes = new Uint8Array(buf);
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+async function pushState() {
+  if (!pushSupported()) return iosNeedsInstall() ? 'ios-install' : 'unsupported';
+  if (Notification.permission === 'denied') return 'blocked';
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    return sub ? 'on' : 'off';
+  } catch (e) {
+    return 'off';
+  }
+}
+
+/** Subscribe this phone and record it. The endpoint is the key the server
+    pushes to; the two others encrypt the payload so the push service that
+    carries it cannot read it. */
+async function enablePush() {
+  if (!pushSupported()) throw new Error('This browser cannot do notifications');
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') throw new Error('Notifications were not allowed');
+
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array((CFG.VAPID_PUBLIC_KEY || '').trim())
+    });
+  }
+  const json = sub.toJSON ? sub.toJSON() : {};
+  const keys = json.keys || {};
+  await DB.savePushSubscription({
+    profile_id: state.profile && state.profile.id,
+    endpoint: sub.endpoint,
+    p256dh: keys.p256dh || bufToB64Url(sub.getKey('p256dh')),
+    auth: keys.auth || bufToB64Url(sub.getKey('auth')),
+    user_agent: navigator.userAgent.slice(0, 300)
+  });
+  return true;
+}
+
+async function disablePush() {
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (!sub) return true;
+  const endpoint = sub.endpoint;
+  await sub.unsubscribe();
+  // Drop the row too, or the sender keeps pushing at a dead endpoint.
+  try { await DB.removePushSubscription(endpoint); } catch (e) { /* gone anyway */ }
+  return true;
 }
 
 /* ---- Photos from outside the app: dropped in, or pasted ----

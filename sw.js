@@ -7,7 +7,7 @@
    ASSET_V must match the ?v= stamp on the tags in index.html. Bump both
    on every deploy: without it GitHub Pages' own cache headers keep handing
    the browser yesterday's app.js for up to ten minutes after a push. */
-const ASSET_V = '37';
+const ASSET_V = '38';
 const SHELL = 'yardstock-shell-v' + ASSET_V;
 const FILES = [
   'index.html',
@@ -30,6 +30,46 @@ self.addEventListener('activate', (e) => {
     caches.keys()
       .then(keys => Promise.all(keys.filter(k => k !== SHELL).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
+  );
+});
+
+/* ---- Push ----
+   A supplier is told when one of their lines drops to its reorder level.
+   The payload is JSON: { title, body, url, tag }. A tag of the product id
+   means a second warning about the same item replaces the first on the
+   lock screen rather than stacking up behind it.
+
+   Anything at all must be shown. A push that arrives and displays nothing
+   costs the site its permission in Chrome, so a malformed payload still
+   gets a generic notification rather than being dropped. */
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) { d = {}; }
+  const title = d.title || 'Yard Stock';
+  e.waitUntil(self.registration.showNotification(title, {
+    body: d.body || 'Something needs your attention.',
+    icon: 'icon-192.png',
+    badge: 'icon-192.png',
+    tag: d.tag || 'yardstock',
+    renotify: true,
+    data: { url: d.url || './' }
+  }));
+});
+
+/* Bring the open app forward rather than opening a second copy of it. */
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = new URL((e.notification.data && e.notification.data.url) || './', self.location.href).href;
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      for (const c of list) {
+        if (c.url === target && 'focus' in c) return c.focus();
+      }
+      for (const c of list) {
+        if ('navigate' in c && 'focus' in c) return c.navigate(target).then(w => w && w.focus());
+      }
+      return self.clients.openWindow ? self.clients.openWindow(target) : null;
+    })
   );
 });
 
