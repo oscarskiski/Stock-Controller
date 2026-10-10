@@ -1,0 +1,48 @@
+name: Low stock alerts
+
+# Every fifteen minutes, and on demand from the Actions tab — the manual
+# run is how you test it without waiting, and how you check it still works
+# after changing anything.
+#
+# GitHub does not promise a scheduled run starts on the minute; under load
+# it can be several minutes late. That is fine for "send more paint" and
+# would not be for anything time-critical.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'List what would be sent, send nothing'
+        type: boolean
+        default: false
+
+# Two runs at once would race to stamp the same product and could send the
+# same warning twice. Let a run finish before the next starts.
+concurrency:
+  group: low-stock-alerts
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install web-push
+        run: npm install web-push@3.6.7 --no-save --no-audit --no-fund
+
+      - name: Send
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: node tools/send-low-stock-alerts.mjs
