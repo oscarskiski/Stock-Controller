@@ -64,6 +64,44 @@ if (missing.length) {
   process.exit(0);
 }
 
+/* Which role a Supabase key carries, read straight out of the JWT's middle
+   section. Not verified — there is nothing to verify against here, and the
+   point is only to tell the two keys apart before a confusing 403.
+
+   The anon key and the service_role key sit side by side in the dashboard
+   and look identical at a glance. Picking the wrong one gets "permission
+   denied" on every table, which reads like the lock-down is broken rather
+   than like the wrong key was copied. */
+function keyRole(key) {
+  try {
+    const mid = String(key).split('.')[1];
+    if (!mid) return null;   // newer sb_secret_… keys are not JWTs
+    const pad = '='.repeat((4 - mid.length % 4) % 4);
+    const json = JSON.parse(
+      Buffer.from(mid.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64').toString('utf8'));
+    return json.role || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+const role = keyRole(SUPABASE_SERVICE_ROLE_KEY);
+if (role && role !== 'service_role') {
+  say('## Wrong Supabase key');
+  say('');
+  say(`SUPABASE_SERVICE_ROLE_KEY holds the **${role}** key, not the service_role one.`);
+  say('');
+  say('The anon key had its access taken away by the access cutover, which is');
+  say('why every table answers "permission denied". This job reads across every');
+  say('supplier and everybody\'s subscriptions, so it needs the service_role key.');
+  say('');
+  say('Supabase -> Project Settings -> API Keys -> the row marked **service_role**');
+  say('(it says *secret*, and is hidden until you reveal it). Replace the secret');
+  say('in GitHub with that value.');
+  await writeSummary();
+  process.exit(0);
+}
+
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
 const DRY_RUN = process.env.DRY_RUN === 'true';
@@ -79,7 +117,19 @@ async function rest(path, opts = {}) {
     },
     body: opts.body ? JSON.stringify(opts.body) : undefined
   });
-  if (!res.ok) throw new Error(`${path} -> ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const body = await res.text();
+    // 42501 is "permission denied", which for this job means the key is not
+    // the service_role one — worth saying rather than leaving a raw 403.
+    if (body.includes('42501')) {
+      throw new Error(
+        `Permission denied reading ${path.split('?')[0]}. ` +
+        'That is what a key without service_role rights gets since the access ' +
+        'cutover. Check SUPABASE_SERVICE_ROLE_KEY really holds the service_role ' +
+        'key from Project Settings -> API Keys, not the anon one.');
+    }
+    throw new Error(`${path} -> ${res.status} ${body}`);
+  }
   return res.status === 204 ? null : await res.json();
 }
 
