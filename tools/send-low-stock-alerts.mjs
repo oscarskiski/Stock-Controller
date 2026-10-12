@@ -72,34 +72,57 @@ if (missing.length) {
    and look identical at a glance. Picking the wrong one gets "permission
    denied" on every table, which reads like the lock-down is broken rather
    than like the wrong key was copied. */
-function keyRole(key) {
+/* Supabase hands out keys in two generations and four flavours:
+
+     eyJ… with role anon          public, and locked out by the cutover
+     eyJ… with role service_role  what this job needs
+     sb_publishable_…             the new name for the anon one
+     sb_secret_…                  the new name for the service_role one
+
+   Only two of those work here, and nothing about looking at them says
+   which is which — hence this. The publishable key is the trap: it is not
+   a JWT, so reading the role out of it finds nothing, and it fails later
+   with the same permission error as the anon key. */
+function describeKey(key) {
+  const k = String(key || '').trim();
+  if (k.startsWith('sb_secret_')) return { ok: true, what: 'secret key' };
+  if (k.startsWith('sb_publishable_')) return { ok: false, what: 'publishable key' };
   try {
-    const mid = String(key).split('.')[1];
-    if (!mid) return null;   // newer sb_secret_… keys are not JWTs
+    const mid = k.split('.')[1];
+    if (!mid) return { ok: null, what: 'an unrecognised key' };
     const pad = '='.repeat((4 - mid.length % 4) % 4);
     const json = JSON.parse(
       Buffer.from(mid.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64').toString('utf8'));
-    return json.role || null;
+    if (!json.role) return { ok: null, what: 'a key with no role in it' };
+    return { ok: json.role === 'service_role', what: `${json.role} key` };
   } catch (e) {
-    return null;
+    return { ok: null, what: 'an unreadable key' };
   }
 }
 
-const role = keyRole(SUPABASE_SERVICE_ROLE_KEY);
-if (role && role !== 'service_role') {
+const key = describeKey(SUPABASE_SERVICE_ROLE_KEY);
+if (key.ok === false) {
   say('## Wrong Supabase key');
   say('');
-  say(`SUPABASE_SERVICE_ROLE_KEY holds the **${role}** key, not the service_role one.`);
+  say(`SUPABASE_SERVICE_ROLE_KEY holds the **${key.what}**, which is the public one.`);
   say('');
-  say('The anon key had its access taken away by the access cutover, which is');
-  say('why every table answers "permission denied". This job reads across every');
-  say('supplier and everybody\'s subscriptions, so it needs the service_role key.');
+  say('That is the key the app itself uses, and the access cutover took its');
+  say('rights away — which is why every table answers "permission denied".');
+  say('This job reads across every supplier and everybody\'s subscriptions, so');
+  say('it needs the private one.');
   say('');
-  say('Supabase -> Project Settings -> API Keys -> the row marked **service_role**');
-  say('(it says *secret*, and is hidden until you reveal it). Replace the secret');
-  say('in GitHub with that value.');
+  say('Supabase -> Project Settings -> API Keys. You want the key that is');
+  say('**hidden until you click to reveal it** and warned about — named either');
+  say('`service_role` or `secret`, depending on how new your project is.');
+  say('If you could read it off the page without revealing it, it is the wrong one.');
   await writeSummary();
   process.exit(0);
+}
+// Unrecognised is not refused: Supabase may well invent a fifth kind, and
+// guessing wrong would block a key that works. Noted, and allowed through.
+if (key.ok === null) {
+  say(`_Note: could not tell what sort of key SUPABASE_SERVICE_ROLE_KEY is (${key.what}). Carrying on._`);
+  say('');
 }
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
