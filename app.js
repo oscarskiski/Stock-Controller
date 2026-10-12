@@ -4767,10 +4767,18 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && !s
   bootServiceWorker();
 })();
 
+/* The service worker is where a push notification is caught and shown, and
+   an installed app keeps its own copy of it. Registering alone does not
+   reliably replace a stale one — a home-screen app on iOS will happily run
+   a worker from weeks ago — and a worker predating the push handler simply
+   drops every notification on the floor. The page can be bang up to date
+   while the part that matters is not, which looks exactly like push being
+   broken. So ask for a fresh copy every launch. */
 function bootServiceWorker() {
-  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  }
+  if (!('serviceWorker' in navigator) || !location.protocol.startsWith('http')) return;
+  navigator.serviceWorker.register('sw.js')
+    .then(reg => reg.update().catch(() => {}))
+    .catch(() => {});
 }
 function openDeepLinkedItem(id) {
   if (productById(id)) openProductDetail(id);
