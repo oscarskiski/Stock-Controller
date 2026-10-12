@@ -1085,6 +1085,10 @@ async function openClientAccountSheet() {
   const pushRow = {
     on:          ['Notifications are on', 'Turn off', 'var(--sys-red)'],
     off:         ['Get told when stock runs low', 'Turn on', 'var(--sys-blue)'],
+    // This phone agreed, but the subscription never reached the server, so
+    // nothing can be sent to it. Turning it on again re-saves it.
+    half:        ['This phone is not fully signed up — tap to finish', 'Fix it', 'var(--sys-orange)'],
+    unknown:     ['Could not check whether notifications are on', 'Try again', 'var(--sys-blue)'],
     blocked:     ['Notifications are blocked in this browser’s settings', '', ''],
     'ios-install': ['Add this app to your Home Screen first — Share, then Add to Home Screen — then notifications can be turned on', '', ''],
     unsupported: ['', '', '']
@@ -1126,7 +1130,11 @@ async function openClientAccountSheet() {
       else { await enablePush(); toast('Notifications on — you will hear when stock runs low', 'good'); }
       openClientAccountSheet();
     } catch (e) {
-      toast(e.message || 'Could not change that', 'bad');
+      // Loud, and it stays on screen: a failure here is the difference
+      // between hearing about low stock and never hearing anything, and it
+      // used to leave the row cheerfully reading "on".
+      toast(e.message || 'Could not turn notifications on', 'bad');
+      openClientAccountSheet();
     }
   });
   openSheet();
@@ -4224,15 +4232,29 @@ function bufToB64Url(buf) {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
+/* Both halves have to be true, and they can disagree. The browser holding
+   a subscription says only that it agreed to one; what makes a warning
+   actually arrive is a matching row in the database for the sender to push
+   at. Report the browser's half alone and a failed save reads as "on"
+   while nothing can ever be sent — which is indistinguishable, from the
+   phone, from the notification simply not working. */
 async function pushState() {
   if (!pushSupported()) return iosNeedsInstall() ? 'ios-install' : 'unsupported';
   if (Notification.permission === 'denied') return 'blocked';
+  let sub = null;
   try {
     const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.getSubscription();
-    return sub ? 'on' : 'off';
+    sub = await reg.pushManager.getSubscription();
   } catch (e) {
     return 'off';
+  }
+  if (!sub) return 'off';
+  try {
+    const rows = (await DB.listMyPushSubscriptions()) || [];
+    return rows.some(r => r.endpoint === sub.endpoint) ? 'on' : 'half';
+  } catch (e) {
+    // Offline or refused: say nothing rather than claim either way.
+    return 'unknown';
   }
 }
 

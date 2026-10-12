@@ -219,6 +219,7 @@
     /* Local mode has no sign-in and so nobody is a supplier. These exist so
        the supplier screens can be opened and looked at without a server,
        and so nothing throws if they are reached by accident. */
+    async listMyPushSubscriptions() { return []; },
     async savePushSubscription() { throw new Error('Notifications need the shared database'); },
     async removePushSubscription() { return true; },
     async listSupplierStock() { await this.init(); return []; },
@@ -603,6 +604,12 @@
     async listSupplyOrders() {
       return await this.rest('supply_orders?select=*,products(name,unit)&order=created_at.desc&limit=200');
     },
+    /* Row-level security limits this to the caller's own phones, so there
+       is nothing to filter by here. */
+    async listMyPushSubscriptions() {
+      return await this.rest('push_subscriptions?select=id,endpoint');
+    },
+
     /* Upsert on the endpoint: a phone that re-subscribes must replace its
        own row, not add a second one, or every warning arrives twice. */
     async savePushSubscription(s) {
@@ -862,6 +869,7 @@
     listSupplierStock()        { return this._read('supplier_stock', () => impl.listSupplierStock()); },
     listSupplierMovements(n)   { return this._read('supplier_moves', () => impl.listSupplierMovements(n)); },
     listSupplyOrders()         { return this._read('supply_orders', () => impl.listSupplyOrders()); },
+    listMyPushSubscriptions()  { return this._read('my_push_subs', () => impl.listMyPushSubscriptions()); },
     savePushSubscription(s)    { return this._write(() => impl.savePushSubscription(s)); },
     removePushSubscription(e)  { return this._write(() => impl.removePushSubscription(e)); },
     createSupplyOrder(o)       { return this._write(() => impl.createSupplyOrder(o)); },
