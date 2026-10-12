@@ -209,24 +209,51 @@ async function phonesFor(supplierId) {
   );
 }
 
+/* What a subscription looks like, without printing any of it.
+
+   "Accepted by the push service" and "shown on the phone" are different
+   things: the service never decrypts the payload, so it will cheerfully
+   take a message encrypted with the wrong keys and the phone will drop it
+   in silence. Nothing upstream reports that. These three facts separate
+   the cases — the host says which platform, and the key lengths say
+   whether they survived the trip into the database intact.
+
+   p256dh is a 65-byte point, which is 87 or 88 base64url characters; auth
+   is 16 bytes, which is 22. Anything else and the payload cannot be
+   decrypted, however happily it was accepted. */
+function describeSub(sub) {
+  let host = 'unknown';
+  try { host = new URL(sub.endpoint).host; } catch (e) { /* leave it */ }
+  const platform =
+    /apple\.com$/.test(host) ? 'iPhone or Mac (Apple)' :
+    /google(apis)?\.com$/.test(host) ? 'Chrome or Android (Google)' :
+    /mozilla\.com$/.test(host) ? 'Firefox (Mozilla)' : 'unrecognised';
+  const p = (sub.p256dh || '').length;
+  const a = (sub.auth || '').length;
+  const keysLook = (p === 87 || p === 88) && a === 22 ? 'look right' : 'ARE THE WRONG LENGTH';
+  return `${platform} · ${host} · keys ${keysLook} (p256dh ${p}, auth ${a})`;
+}
+
 async function send(sub, payload) {
   try {
-    await webpush.sendNotification(
+    const res = await webpush.sendNotification(
       { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
       JSON.stringify(payload)
     );
+    say(`    - ${describeSub(sub)} — accepted, status ${res && res.statusCode}`);
     return true;
   } catch (err) {
+    say(`    - ${describeSub(sub)} — refused`);
     // 404 and 410 mean the browser threw the subscription away — an app
     // deleted, permission revoked, a phone wiped. Keeping it would mean
     // pushing at a dead endpoint for ever.
     if (err.statusCode === 404 || err.statusCode === 410) {
-      console.log(`  subscription gone (${err.statusCode}), removing it`);
+      say(`      the push service says this subscription is gone (${err.statusCode}) — removed`);
       await rest(`push_subscriptions?id=eq.${sub.id}`, { method: 'DELETE' })
-        .catch(e => console.log(`  could not remove: ${e.message}`));
+        .catch(e => say(`      could not remove it: ${e.message}`));
       return false;
     }
-    console.log(`  push failed (${err.statusCode || '?'}): ${err.message}`);
+    say(`      refused with ${err.statusCode || '?'}: ${err.message}`);
     return false;
   }
 }
