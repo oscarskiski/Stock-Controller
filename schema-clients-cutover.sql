@@ -187,6 +187,25 @@ revoke all on public.people, public.products, public.movements,
               public.supply_orders from anon;
 revoke execute on function public.apply_movement(uuid, numeric, text, text, text) from anon;
 
+-- ---------------------------------------------------------
+-- And make sure service_role still has its own
+-- ---------------------------------------------------------
+-- schema.sql grants its tables to anon and authenticated, and never to
+-- service_role. That goes unnoticed for as long as the anon key can read
+-- everything, because nothing needs service_role. Taking anon's rights
+-- away above leaves nothing for anybody — including the scheduled alert
+-- job, whose perfectly good service_role key is then refused by every
+-- table. "Permission denied" for the one key that is supposed to work.
+--
+-- service_role never reaches a browser. Seeing everything is its purpose.
+grant usage on schema public to service_role;
+grant all on all tables    in schema public to service_role;
+grant all on all sequences in schema public to service_role;
+grant execute on all functions in schema public to service_role;
+alter default privileges in schema public grant all on tables    to service_role;
+alter default privileges in schema public grant all on sequences to service_role;
+alter default privileges in schema public grant execute on functions to service_role;
+
 -- Photos stay world-readable: they are shown in <img> tags, which cannot
 -- send an Authorization header, and the URLs are unguessable. Writing one
 -- still requires a signed-in user.
