@@ -1110,6 +1110,13 @@ async function openClientAccountSheet() {
             '<span class="fname">' + pushRow[0] + '</span>' +
             (pushRow[1] ? '<span class="field-val" style="color:' + pushRow[2] + ';font-weight:600;">' + pushRow[1] + '</span>' : '') +
           '</div>' +
+          // Only once they are on: before that there is nothing to test.
+          (push === 'on'
+            ? '<div class="field-row" data-pushtest style="cursor:pointer;">' +
+                '<span class="fname" style="color:var(--sys-blue);">Send a test notification</span>' +
+                '<span class="field-val">to this phone</span>' +
+              '</div>'
+            : '') +
         '</div>'
       : '') +
     // An installed app keeps its own cached copy, so "which version is this
@@ -1135,6 +1142,18 @@ async function openClientAccountSheet() {
       // used to leave the row cheerfully reading "on".
       toast(e.message || 'Could not turn notifications on', 'bad');
       openClientAccountSheet();
+    }
+  });
+  const ptest = sheetEl.querySelector('[data-pushtest]');
+  if (ptest) ptest.addEventListener('click', async () => {
+    try {
+      await testNotification();
+      // The sheet is closed because on some phones a notification will not
+      // be shown at all while the app that raised it is in the foreground.
+      closeSheet();
+      toast('Sent — close the app and look', 'good');
+    } catch (e) {
+      toast(e.message || 'Could not show a notification', 'bad');
     }
   });
   openSheet();
@@ -4282,6 +4301,32 @@ async function enablePush() {
     p256dh: keys.p256dh || bufToB64Url(sub.getKey('p256dh')),
     auth: keys.auth || bufToB64Url(sub.getKey('auth')),
     user_agent: navigator.userAgent.slice(0, 300)
+  });
+  return true;
+}
+
+/* Show a notification from this phone, with no server involved.
+
+   It splits the problem in half. Delivery has several links — the sender,
+   the push service, the browser's own plumbing, the service worker, the
+   operating system — and "nothing arrived" says nothing about which gave
+   way. This exercises only the last two. If it appears, the phone can show
+   notifications and the fault is in delivery; if it does not, nothing sent
+   from anywhere was ever going to show, and the sending is a red herring. */
+async function testNotification() {
+  if (!pushSupported()) throw new Error('This browser cannot do notifications');
+  if (Notification.permission !== 'granted') {
+    const p = await Notification.requestPermission();
+    if (p !== 'granted') throw new Error('Notifications were not allowed');
+  }
+  const reg = await navigator.serviceWorker.ready;
+  await reg.showNotification('Yard Stock test', {
+    body: 'If you can see this, notifications work on this phone.',
+    icon: 'icon-192.png',
+    badge: 'icon-192.png',
+    tag: 'yardstock-test',
+    renotify: true,
+    data: { url: './' }
   });
   return true;
 }
