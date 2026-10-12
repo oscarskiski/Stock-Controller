@@ -30,13 +30,38 @@ const {
   VAPID_SUBJECT = 'mailto:stock@example.com'
 } = process.env;
 
-for (const [name, v] of Object.entries({
+/* Everything worth knowing goes on the run's summary page as well as into
+   the log. The log is three clicks down and easy to miss; the summary is
+   the first thing on screen when a run is opened. */
+const summary = [];
+function say(line) {
+  console.log(line);
+  summary.push(line);
+}
+async function writeSummary() {
+  const path = process.env.GITHUB_STEP_SUMMARY;
+  if (!path) return;
+  const { appendFile } = await import('node:fs/promises');
+  await appendFile(path, summary.join('\n') + '\n');
+}
+
+const missing = Object.entries({
   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY
-})) {
-  if (!v) {
-    console.error(`Missing ${name}. Set it in the repository's Actions secrets.`);
-    process.exit(1);
-  }
+}).filter(([, v]) => !v).map(([k]) => k);
+
+if (missing.length) {
+  /* Exit 0, not 1. Nothing has broken — it simply has not been set up yet,
+     and a non-zero exit makes GitHub email the owner on every scheduled
+     run, which drowns the real message in failure notices. */
+  say('## Not set up yet');
+  say('');
+  say(`These secrets are missing: **${missing.join(', ')}**`);
+  say('');
+  say('Settings -> Secrets and variables -> Actions. The names must match');
+  say('exactly, capitals and underscores included. Secrets that exist under');
+  say('a slightly different name are invisible to this job.');
+  await writeSummary();
+  process.exit(0);
 }
 
 webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
@@ -106,10 +131,14 @@ async function send(sub, payload) {
 async function main() {
   const low = await lowStock();
   if (!low.length) {
-    console.log('Nothing has crossed its reorder level. Nothing to do.');
+    say('## Nothing to send');
+    say('');
+    say('No product is at or below its reorder level, out of those that have');
+    say('a supplier attached and have not already been warned about.');
     return;
   }
-  console.log(`${low.length} item(s) at or below their reorder level.`);
+  say('## ' + low.length + ' item(s) at or below their reorder level');
+  say('');
 
   // One lookup per supplier, not per product: several of a supplier's lines
   // commonly run low together.
@@ -122,15 +151,15 @@ async function main() {
     }
     const phones = phoneCache.get(p.supplier_id);
     const unit = p.unit || 'ea';
-    console.log(`- ${p.name}: ${p.qty}${unit} left, reorder at ${p.min_qty}${unit}, ${phones.length} phone(s)`);
+    say(`- **${p.name}** — ${p.qty}${unit} left, reorder at ${p.min_qty}${unit}, ${phones.length} phone(s) subscribed`);
 
     if (!phones.length) {
       // Deliberately not stamped: nobody was told, so this must stay
       // pending and fire the moment somebody subscribes.
-      console.log('  nobody subscribed — leaving it pending');
+      say('  - nobody subscribed, so nothing sent. Left pending, and it will fire as soon as somebody does.');
       continue;
     }
-    if (DRY_RUN) { console.log('  dry run, not sending'); continue; }
+    if (DRY_RUN) { say('  - dry run, nothing sent'); continue; }
 
     const payload = {
       title: `${p.name} is running low`,
@@ -147,15 +176,26 @@ async function main() {
         body: { low_alert_sent_at: new Date().toISOString() }
       });
       sentAny += ok;
-      console.log(`  sent to ${ok} phone(s), marked as warned`);
+      say(`  - sent to ${ok} phone(s)`);
     } else {
-      console.log('  nothing got through — leaving it pending to try again');
+      say('  - nothing got through. Left pending to try again next run.');
     }
   }
-  console.log(`Done. ${sentAny} notification(s) sent.`);
+  say('');
+  say(`**${sentAny} notification(s) sent.**`);
 }
 
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+main()
+  .then(writeSummary)
+  .catch(async err => {
+    // A genuine fault, as opposed to "not configured" — worth failing on,
+    // but say what it was somewhere findable first.
+    say('## It did not run');
+    say('');
+    say('```');
+    say(String(err && err.message ? err.message : err));
+    say('```');
+    await writeSummary().catch(() => {});
+    console.error(err);
+    process.exit(1);
+  });
