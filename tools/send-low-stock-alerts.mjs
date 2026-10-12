@@ -88,7 +88,19 @@ function describeKey(key) {
   if (k.startsWith('sb_secret_')) return { ok: true, what: 'secret key' };
   if (k.startsWith('sb_publishable_')) return { ok: false, what: 'publishable key' };
   try {
-    const mid = k.split('.')[1];
+    const parts = k.split('.');
+    /* A JWT is three dot-separated parts. Two means the signature was lost,
+       which happens when the key is selected with the mouse and copied from
+       what the dashboard displays rather than with its copy button — the box
+       shows a shortened version.
+
+       This is worth its own message because it fails in the most confusing
+       way available: the readable middle still says service_role, so the key
+       looks right, but Supabase cannot verify it, treats the request as
+       anonymous, and anonymous is precisely what the cutover locked out. The
+       result is "permission denied" for a key that appears to be correct. */
+    if (parts.length === 2) return { ok: false, what: 'truncated key', cut: true };
+    const mid = parts[1];
     if (!mid) return { ok: null, what: 'an unrecognised key' };
     const pad = '='.repeat((4 - mid.length % 4) % 4);
     const json = JSON.parse(
@@ -101,6 +113,24 @@ function describeKey(key) {
 }
 
 const key = describeKey(SUPABASE_SERVICE_ROLE_KEY);
+if (key.cut) {
+  say('## The key is cut short');
+  say('');
+  say(`SUPABASE_SERVICE_ROLE_KEY is only ${String(SUPABASE_SERVICE_ROLE_KEY).trim().length} characters`);
+  say('and is missing its last section. A whole one is usually 200 or more.');
+  say('');
+  say('It is the right *sort* of key — the readable part says service_role —');
+  say('but without its ending Supabase cannot check it, so it falls back to');
+  say('treating this as an anonymous request, and anonymous is exactly what');
+  say('the access cutover locked out. Hence "permission denied" for a key that');
+  say('looks correct.');
+  say('');
+  say('This happens when the key is selected with the mouse and copied from');
+  say('what the page shows, because the box displays a shortened version.');
+  say('**Use the copy button beside the key instead**, then replace the secret.');
+  await writeSummary();
+  process.exit(0);
+}
 if (key.ok === false) {
   say('## Wrong Supabase key');
   say('');
