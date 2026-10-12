@@ -15,7 +15,15 @@ name: Low stock alerts
 # This is not, and with a scheduled job cannot be, immediate. If stock
 # needs to raise the alarm the moment it crosses the line, the trigger has
 # to come from the database rather than from a clock over here.
+#
+# repository_dispatch is the database poking this the instant stock crosses
+# its reorder level, which is what makes a notification arrive in seconds.
+# The hourly sweep stays as the safety net: a poke that never lands is
+# caught by the next one, and the told-once flag means neither path can
+# send the same warning twice.
 on:
+  repository_dispatch:
+    types: [low-stock]
   schedule:
     - cron: '7 * * * *'
   workflow_dispatch:
