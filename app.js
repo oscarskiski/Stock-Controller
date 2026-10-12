@@ -1108,6 +1108,10 @@ async function openClientAccountSheet() {
           '</div>' +
         '</div>'
       : '') +
+    // An installed app keeps its own cached copy, so "which version is this
+    // phone actually running" is a real question and was unanswerable from
+    // out here — the build number only showed on the staff settings sheet.
+    '<div class="status-line">Yard Stock · build ' + escapeHtml(ASSET_VERSION) + '</div>' +
     '<div class="sheet-actions">' +
       '<button class="sheet-cancel" data-close type="button">Close</button>' +
       '<button class="sheet-delete" data-signout type="button" style="flex:1;border-radius:var(--r-md);">Sign out</button>' +
