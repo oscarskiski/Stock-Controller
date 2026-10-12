@@ -1,15 +1,15 @@
 name: Low stock alerts
 
-# The schedule is deliberately switched off until a manual run has been
-# seen to work. Left on while the job was still failing, it did nothing
-# except email the repository owner "your workflow failed" every few hours
-# — noise that looked like stock alerts and buried the real problem.
+# Back on, now a manual run has been seen to work end to end. It stayed off
+# while the job was still failing: all it achieved then was emailing the
+# repository owner "your workflow failed" every few hours, noise that read
+# like stock alerts and buried the real problem.
 #
-# Put the two schedule lines back once a manual run reports what it should.
-# on:
-#   schedule:
-#     - cron: '*/15 * * * *'
+# GitHub does not promise a scheduled run starts on the minute; under load
+# it can be a good deal later. Fine for "send more paint".
 on:
+  schedule:
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
