@@ -7,9 +7,17 @@ name: Low stock alerts
 #
 # GitHub does not promise a scheduled run starts on the minute; under load
 # it can be a good deal later. Fine for "send more paint".
+# Hourly, not every fifteen minutes. Asking for less gets more here: GitHub
+# deprioritises scheduled workflows on free public repositories, and the
+# more often one asks the more runs are quietly dropped. Every fifteen
+# minutes produced runs three to seven hours apart, then a twelve hour gap.
+#
+# This is not, and with a scheduled job cannot be, immediate. If stock
+# needs to raise the alarm the moment it crosses the line, the trigger has
+# to come from the database rather than from a clock over here.
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '7 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
