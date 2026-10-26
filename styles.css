@@ -765,6 +765,65 @@ img { display: block; }
 .kcard-row-split .kcard-v2 { flex: 1 1 auto; }
 .kcard-k2 { border-left: 0.25mm solid #000; }
 
+/* ---------- Small Kanban card (80mm x 35mm) ----------
+     name banner   80 x 7mm      12pt bold (steps down for long names)
+     photo         30 x 28mm     (left)
+     Group / Re-Order / Supplier / MOQ
+                   50 x 7mm each (right) */
+.ksm {
+  width: 80mm; height: 35mm; border: 0.35mm solid #000; background: #fff; color: #000;
+  display: flex; flex-direction: column; overflow: hidden; font-family: var(--sans); flex-shrink: 0;
+}
+.ksm-head {
+  height: 7mm; flex: 0 0 7mm; font-weight: 800; font-size: 12pt; line-height: 7mm;
+  text-align: center; overflow: hidden; white-space: nowrap; padding: 0 1.5mm;
+  border-bottom: 0.25mm solid #000;
+}
+.ksm-head-sm { font-size: 10pt; }
+.ksm-head-xs { font-size: 8pt; }
+.ksm-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.ksm-pic {
+  width: 30mm; flex: 0 0 30mm; border-right: 0.25mm solid #000; box-sizing: border-box;
+  display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 0.8mm;
+}
+.ksm-pic img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.ksm-pic-ph { color: #999; font-size: 7pt; }
+.ksm-fields { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.ksm-row { flex: 1 1 0; min-height: 0; display: flex; border-bottom: 0.25mm solid #000; }
+.ksm-row:last-child { border-bottom: 0; }
+.ksm-k {
+  width: 15mm; flex: 0 0 15mm; background: #e6e6e6; border-right: 0.25mm solid #000;
+  font-size: 7pt; padding: 0 1mm; display: flex; align-items: center; white-space: nowrap;
+}
+.ksm-v {
+  flex: 1; min-width: 0; font-weight: 700; font-size: 9pt; padding: 0 1.5mm;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---------- Large Kanban card (149mm x 109mm) ----------
+   Name banner across the top, then the photo filling everything under it. */
+.klg {
+  width: 149mm; height: 109mm; border: 0.35mm solid #000; background: #fff; color: #000;
+  display: flex; flex-direction: column; overflow: hidden; font-family: var(--sans); flex-shrink: 0;
+}
+.klg-head {
+  height: 18mm; flex: 0 0 18mm; display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 28pt; line-height: 1.1; text-align: center;
+  padding: 0 3mm; overflow: hidden; border-bottom: 0.35mm solid #000;
+}
+/* Long names step down, and may wrap onto a second line. */
+.klg-head-sm { font-size: 21pt; }
+.klg-head-xs { font-size: 15pt; }
+.klg-pic {
+  flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center;
+  padding: 3mm; box-sizing: border-box; overflow: hidden;
+}
+/* Fill the box whatever the photo's pixel size; contain keeps all of it. */
+.klg-pic img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.klg-pic-ph { color: #999; font-size: 12pt; }
+.page-scale-klg { width: 149mm; margin: 0 auto; }
+
 /* ---------- Item card ----------
    Not a Kanban signal: just "this is the thing, here is its code". Name as a
    header across the top, then the QR and the photo filling everything under
@@ -847,6 +906,8 @@ img { display: block; }
 @media screen and (max-width: 420px) {
   .print-area .kcard { transform: scale(0.72); transform-origin: top center; }
   .print-area { height: 47mm; }
+  /* The small card already fits a phone at true size. */
+  .print-area.print-area-sm { height: auto; }
 }
 /* The card is cloned into #printRoot (a direct child of <body>) before printing.
    Printing from inside .sheet does not work: .sheet carries a transform, which
@@ -872,7 +933,7 @@ img { display: block; }
      confuses printers that only hold A4. The 184mm item card still fits
      inside A4 portrait's printable width with this 10mm margin. */
   @page { margin: 10mm; }
-  #printRoot .kcard, #printRoot .icard { page-break-inside: avoid; break-inside: avoid; }
+  #printRoot .kcard, #printRoot .icard, #printRoot .ksm, #printRoot .klg { page-break-inside: avoid; break-inside: avoid; }
 
   /* The book-out sheet is one A4 page: keep its header with the table and
      never let a ruled line break across pages. */

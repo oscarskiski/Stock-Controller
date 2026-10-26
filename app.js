@@ -2860,6 +2860,16 @@ if (kanbanType === ITEM_CARD) {
 function isItemCard() { return printKind === ITEM_CARD; }
 let itemCardLarge = localStorage.getItem('ys_item_card_large') === '1';
 
+/* Kanban card sizes. Standard is the full 92x62mm signal card; the small one
+   is a shelf-edge label with just the name, photo and the four reorder facts. */
+const KANBAN_SIZES = [
+  ['std', 'Standard 92 &times; 62', '92 &times; 62mm'],
+  ['sm', 'Small 80 &times; 35', '80 &times; 35mm'],
+  ['lg', 'Large 149 &times; 109', '149 &times; 109mm']
+];
+let kanbanSize = localStorage.getItem('ys_kanban_size') || 'std';
+if (!KANBAN_SIZES.some(s => s[0] === kanbanSize)) kanbanSize = 'std';
+
 /* Per-type banner colour the user has picked, keyed by type. Anything not in
    here falls back to the type's shipped colour. */
 let kanbanColors = (() => {
@@ -2985,7 +2995,52 @@ function bookOutSheetHtml(p) {
   '</div>';
 }
 
+/* 80 x 35mm: item name in the coloured banner, photo on the left, and
+   Group / Re-Order / Supplier / MOQ stacked on the right. The banner takes
+   the selected Kanban type's colour, so the type still reads at a glance. */
+function kanbanSmallCardHtml(p) {
+  const moq = parseAmountUnit(p.pref_moq, p.unit);
+  const name = String(p.name || '');
+  const headSize = name.length > 34 ? ' ksm-head-xs' : name.length > 24 ? ' ksm-head-sm' : '';
+  const bg = kanbanColor(kanbanType);
+  const row = (k, v) => '<div class="ksm-row"><span class="ksm-k">' + k + ':</span><span class="ksm-v">' + v + '</span></div>';
+  return '<div class="ksm">' +
+    '<div class="ksm-head' + headSize + '" style="background:' + bg + ';color:' + bannerInk(bg) + '">' + escapeHtml(name) + '</div>' +
+    '<div class="ksm-body">' +
+      '<div class="ksm-pic">' +
+        (p.photo_url
+          ? '<img src="' + escapeHtml(p.photo_url) + '" alt="">'
+          : '<span class="ksm-pic-ph">no photo</span>') +
+      '</div>' +
+      '<div class="ksm-fields">' +
+        row('Group', orDash(p.group_name)) +
+        row('Re-Order', fmtQty(p.min_qty)) +
+        row('Supplier', orDash(p.pref_supplier)) +
+        row('MOQ', moq.qty ? escapeHtml(moq.qty) : '—') +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+/* 149 x 109mm: just the item name in the coloured banner and a big photo,
+   for reading from across the store. */
+function kanbanLargeCardHtml(p) {
+  const name = String(p.name || '');
+  const headSize = name.length > 40 ? ' klg-head-xs' : name.length > 26 ? ' klg-head-sm' : '';
+  const bg = kanbanColor(kanbanType);
+  return '<div class="klg">' +
+    '<div class="klg-head' + headSize + '" style="background:' + bg + ';color:' + bannerInk(bg) + '">' + escapeHtml(name) + '</div>' +
+    '<div class="klg-pic">' +
+      (p.photo_url
+        ? '<img src="' + escapeHtml(p.photo_url) + '" alt="">'
+        : '<span class="klg-pic-ph">no photo</span>') +
+    '</div>' +
+  '</div>';
+}
+
 function kanbanCardHtml(p) {
+  if (kanbanSize === 'sm') return kanbanSmallCardHtml(p);
+  if (kanbanSize === 'lg') return kanbanLargeCardHtml(p);
   const t = KANBAN_TYPES[kanbanType] || KANBAN_TYPES.external;
   let qrSvg = '';
   try { qrSvg = QR.toSvg(itemDeepLink(p), { dark: '#000' }); } catch (e) { qrSvg = ''; }
@@ -3063,6 +3118,7 @@ function renderPrintCardSheet(p) {
   const types = [['internal', 'Internal'], ['external', 'External'], ['manufacture', 'Manufacture'], ['plain', 'Plain']];
   const item = isItemCard();
   const bookout = printKind === 'bookout';
+  const largeKanban = printKind === 'kanban' && kanbanSize === 'lg';
   // The colour is kept against whatever it colours — the Kanban subtype, or
   // the item card — so changing one never disturbs the other.
   const colourKey = item ? ITEM_CARD : kanbanType;
@@ -3072,7 +3128,8 @@ function renderPrintCardSheet(p) {
   const title = bookout ? 'Print book-out sheet' : item ? 'Print item card' : 'Print Kanban card';
   const sub = bookout
     ? 'A4. Ruled lines for writing movements by hand at the rack.'
-    : (item ? (itemCardLarge ? '184 &times; 124mm' : '92 &times; 62mm') : '92 &times; 62mm') +
+    : (item ? (itemCardLarge ? '184 &times; 124mm' : '92 &times; 62mm')
+            : (KANBAN_SIZES.find(s => s[0] === kanbanSize) || KANBAN_SIZES[0])[2]) +
       '. Turn off "Fit to page" / "Scale" in the print dialog so it prints true size.';
 
   sheetEl.innerHTML =
@@ -3089,6 +3146,10 @@ function renderPrintCardSheet(p) {
       ? '<div class="segmented no-print">' +
           types.map(([k, label]) =>
             '<button class="seg-btn ' + (kanbanType === k ? 'active' : '') + '" data-ktype="' + k + '" type="button">' + label + '</button>').join('') +
+        '</div>' +
+        '<div class="segmented no-print">' +
+          KANBAN_SIZES.map(([k, label]) =>
+            '<button class="seg-btn ' + (kanbanSize === k ? 'active' : '') + '" data-ksize="' + k + '" type="button">' + label + '</button>').join('') +
         '</div>'
       : '') +
     (item
@@ -3107,8 +3168,12 @@ function renderPrintCardSheet(p) {
         '</label>' +
         (isDefault ? '' : '<button class="kcolor-reset" data-kreset type="button">Reset</button>') +
       '</div>') +
-    '<div class="print-area' + (bookout ? ' print-area-page' : '') + '">' +
-      (bookout ? '<div class="page-scale" id="pageScale">' + printableHtml(p) + '</div>' : printableHtml(p)) +
+    '<div class="print-area' + (bookout || largeKanban ? ' print-area-page' : '') +
+      (printKind === 'kanban' && kanbanSize === 'sm' ? ' print-area-sm' : '') + '">' +
+      (bookout ? '<div class="page-scale" id="pageScale">' + printableHtml(p) + '</div>'
+        // Wider than a phone: preview it shrunk to fit, like the A4 sheet.
+        : largeKanban ? '<div class="page-scale page-scale-klg" id="pageScale">' + printableHtml(p) + '</div>'
+        : printableHtml(p)) +
     '</div>' +
     '<div class="sheet-actions no-print">' +
       '<button class="sheet-cancel" data-close type="button">Close</button>' +
@@ -3123,6 +3188,11 @@ function renderPrintCardSheet(p) {
   sheetEl.querySelectorAll('[data-ktype]').forEach(b => b.addEventListener('click', () => {
     kanbanType = b.getAttribute('data-ktype');
     localStorage.setItem('ys_kanban_type', kanbanType);
+    renderPrintCardSheet(p);
+  }));
+  sheetEl.querySelectorAll('[data-ksize]').forEach(b => b.addEventListener('click', () => {
+    kanbanSize = b.getAttribute('data-ksize');
+    localStorage.setItem('ys_kanban_size', kanbanSize);
     renderPrintCardSheet(p);
   }));
   sheetEl.querySelectorAll('[data-isize]').forEach(b => b.addEventListener('click', () => {
@@ -3174,7 +3244,7 @@ function fitPagePreview() {
 }
 
 function paintBanner(hex) {
-  const head = sheetEl.querySelector('.kcard-head, .icard-head');
+  const head = sheetEl.querySelector('.kcard-head, .icard-head, .ksm-head, .klg-head');
   if (!head) return;
   head.style.background = hex;
   head.style.color = bannerInk(hex);
