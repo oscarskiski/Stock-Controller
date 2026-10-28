@@ -1783,8 +1783,9 @@ function pickLineLoc(l) {
 }
 function pickLines(list) {
   // Walk order: by each item's first location, so the picker crosses the yard once.
+  // Items with no location go last.
   return (list.pick_list_items || []).slice().sort((a, b) =>
-    locSortKey(firstLoc(pickLineLoc(a))).localeCompare(locSortKey(firstLoc(pickLineLoc(b)))));
+    compareLocs(firstLoc(pickLineLoc(a)), firstLoc(pickLineLoc(b))));
 }
 function pickDone(list) {
   const lines = list.pick_list_items || [];
