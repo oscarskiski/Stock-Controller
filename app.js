@@ -280,6 +280,8 @@ const state = {
   me: localStorage.getItem('ys_me') || '',
   q: '',
   cat: 'All',
+  // The dropdown filters on the Stock screen; '' means any.
+  sf: { group: '', site: '', rack: '', supplier: '', owner: '' },
   actFilter: 'All',
   openRacks: {},
   loading: true,
@@ -1291,11 +1293,84 @@ function wireHome(el) {
 }
 
 /* ===================== STOCK screen ===================== */
+/* The dropdown filters. Each offers only values that are actually in use,
+   so nothing in a list can lead to an empty screen. NONE stands for "has
+   none", e.g. items with no group. */
+const NONE = '__none';
+function productSuppliers(p) {
+  return [p.pref_supplier, p.sec_supplier, p.supplier_id && accountName(p.supplier_id)]
+    .map(v => String(v || '').trim()).filter(Boolean);
+}
+function stockFilterOptions() {
+  const all = activeProducts();
+  const uniq = (vals) => Array.from(new Set(vals.filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const sf = state.sf;
+  const locs = all.flatMap(p => locList(p.location).map(parseLoc).filter(Boolean));
+  return {
+    group: uniq(all.map(p => String(p.group_name || '').trim())),
+    noGroup: all.some(p => !String(p.group_name || '').trim()),
+    site: uniq(locs.map(l => l.prefix)),
+    noSite: locs.some(l => !l.prefix),
+    // Rack letters within the chosen site, so the list stays short.
+    rack: uniq(locs.filter(l => !sf.site || (sf.site === NONE ? !l.prefix : l.prefix === sf.site)).map(l => l.letter)),
+    supplier: uniq(all.flatMap(productSuppliers)),
+    owner: clientAccounts()
+  };
+}
+function stockFilterMatch(p) {
+  const sf = state.sf;
+  if (sf.group) {
+    const g = String(p.group_name || '').trim();
+    if (sf.group === NONE ? g : g !== sf.group) return false;
+  }
+  if (sf.site || sf.rack) {
+    const locs = locList(p.location).map(parseLoc).filter(Boolean);
+    const ok = locs.some(l =>
+      (!sf.site || (sf.site === NONE ? !l.prefix : l.prefix === sf.site)) &&
+      (!sf.rack || l.letter === sf.rack));
+    if (!ok) return false;
+  }
+  if (sf.supplier) {
+    const sup = productSuppliers(p);
+    if (sf.supplier === NONE ? sup.length : sup.indexOf(sf.supplier) === -1) return false;
+  }
+  if (sf.owner) {
+    if (sf.owner === NONE ? p.client_id : p.client_id !== sf.owner) return false;
+  }
+  return true;
+}
+function stockFiltersOn() { return Object.keys(state.sf).some(k => state.sf[k]); }
+
+function stockFilterRowHtml() {
+  const o = stockFilterOptions();
+  const sf = state.sf;
+  const sel = (key, anyLabel, opts, noneLabel) => {
+    // A filter still set to a value that has since gone stays listed, so the
+    // dropdown never claims "any" while the list is actually narrowed.
+    if (sf[key] && sf[key] !== NONE && !opts.some(x => x.v === sf[key])) opts = opts.concat([{ v: sf[key], t: sf[key] }]);
+    return '<label class="fsel' + (sf[key] ? ' active' : '') + '"><select data-sf="' + key + '" aria-label="' + anyLabel + '">' +
+      '<option value="">' + anyLabel + '</option>' +
+      opts.map(x => '<option value="' + escapeHtml(x.v) + '"' + (sf[key] === x.v ? ' selected' : '') + '>' + escapeHtml(x.t) + '</option>').join('') +
+      (noneLabel ? '<option value="' + NONE + '"' + (sf[key] === NONE ? ' selected' : '') + '>' + noneLabel + '</option>' : '') +
+    '</select></label>';
+  };
+  const plain = (vals) => vals.map(v => ({ v, t: v }));
+  return '<div class="filter-row">' +
+    sel('group', 'Any group', plain(o.group), o.noGroup ? 'No group' : '') +
+    (o.site.length ? sel('site', 'Any site', plain(o.site), o.noSite ? 'No site' : '') : '') +
+    sel('rack', 'Any rack', o.rack.map(v => ({ v, t: 'Rack ' + v })), '') +
+    sel('supplier', 'Any supplier', plain(o.supplier), 'No supplier') +
+    (o.owner.length ? sel('owner', 'Any owner', o.owner.map(c => ({ v: c.id, t: c.name })), 'Ours') : '') +
+    (stockFiltersOn() ? '<button class="filter-clear" data-sfclear type="button">' + I.x + ' Clear filters</button>' : '') +
+  '</div>';
+}
+
 function filteredProducts() {
   const q = state.q.trim().toLowerCase();
   return activeProducts().filter(p => {
     if (state.cat === 'Low stock') { if (!needsAttention(p)) return false; }
     else if (state.cat !== 'All' && (p.category || 'Parts') !== state.cat) return false;
+    if (!stockFilterMatch(p)) return false;
     if (!q) return true;
     return [p.name, p.code, p.location, p.notes, p.category, p.group_name]
       .some(v => String(v || '').toLowerCase().includes(q));
@@ -1310,12 +1385,18 @@ function stockScreenHtml() {
   const chips = ['All'].concat(CATEGORIES).concat(['Low stock']);
   html += '<div class="chiprow">' + chips.map(c =>
     '<button class="chip ' + (state.cat === c ? 'active' : '') + '" data-cat="' + escapeHtml(c) + '" type="button">' + c + '</button>').join('') + '</div>';
+  html += stockFilterRowHtml();
+  if (stockFiltersOn() || state.q.trim() || state.cat !== 'All') {
+    html += '<div class="filter-count">' + list.length + ' of ' + activeProducts().length + ' items</div>';
+  }
 
   html += '<div class="group">';
   if (!activeProducts().length) {
     html += '<div class="empty-note">No products yet. Go to <strong>Items</strong> to add one — a name and rack code is all it takes.</div>';
   } else if (!list.length) {
-    html += '<div class="empty-note">Nothing matches. Try a rack code like <strong>A3</strong>.</div>';
+    html += '<div class="empty-note">' + (stockFiltersOn()
+      ? 'Nothing matches these filters. Try clearing one of them.'
+      : 'Nothing matches. Try a rack code like <strong>A3</strong>.') + '</div>';
   } else {
     html += list.map(productRowHtml).join('');
   }
@@ -1360,6 +1441,18 @@ function wireStock(el) {
   el.querySelectorAll('[data-cat]').forEach(b => b.addEventListener('click', () => {
     state.cat = b.getAttribute('data-cat'); render();
   }));
+  el.querySelectorAll('[data-sf]').forEach(s => s.addEventListener('change', () => {
+    const key = s.getAttribute('data-sf');
+    state.sf[key] = s.value;
+    // A rack letter belongs to a site; a new site makes the old letter meaningless.
+    if (key === 'site') state.sf.rack = '';
+    render();
+  }));
+  const clr = el.querySelector('[data-sfclear]');
+  if (clr) clr.addEventListener('click', () => {
+    Object.keys(state.sf).forEach(k => { state.sf[k] = ''; });
+    render();
+  });
   wireProductRows(el);
 }
 function wireSearch(el) {
@@ -3059,10 +3152,16 @@ function openSheet() {
   const from = sheetY();
   if (from > 1) sheetEl.scrollTop = 0;
   sheetEl.classList.add('open');
+  // The print preview and the item form are long and dense; on a computer
+  // they get most of the window rather than a phone-width column.
+  syncSheetWidth();
   const ticket = ++sheetAnim;
   const s = new Spring(from, { dampingRatio: 0.86, response: 0.34 });
   s.set(0);
   runSpring(s, (v) => { if (ticket === sheetAnim) setSheetY(v); });
+}
+function syncSheetWidth() {
+  sheetEl.classList.toggle('sheet-wide', !!sheetEl.querySelector('.pl-preview, [data-photo]'));
 }
 function closeSheet() {
   // Closing is the one exit every sheet shares, so the camera and any
@@ -3734,14 +3833,21 @@ function fitPagePreview() {
   if (!box || !page) return;
   page.style.transform = 'none';
   box.style.height = '';
-  const natural = page.getBoundingClientRect();
+  // offsetWidth, not the on-screen box: the sheet is still scaled while it
+  // fades in, and measuring that would size the preview slightly wrong.
+  const natural = { width: page.offsetWidth, height: page.offsetHeight };
   const room = box.clientWidth;
   if (!natural.width || !room) return;
-  const scale = Math.min(1, room / natural.width);
+  // A picking list may grow to fill the wide preview; card previews stay at
+  // actual size at most, so a small label never looks bigger than it prints.
+  const cap = box.classList.contains('pl-preview') ? 2 : 1;
+  const scale = Math.min(cap, room / natural.width);
   page.style.transformOrigin = 'top left';
   page.style.transform = 'scale(' + scale + ')';
   box.style.height = (natural.height * scale) + 'px';
 }
+
+window.addEventListener('resize', () => { if (sheetEl.classList.contains('open')) fitPagePreview(); });
 
 function paintBanner(hex) {
   const head = sheetEl.querySelector('.kcard-head, .icard-head, .ksm-head, .klg-head');
@@ -4359,6 +4465,8 @@ function renderItemForm() {
   sheetEl.querySelector('[data-save]').addEventListener('click', saveItem);
   const del = sheetEl.querySelector('[data-delete]');
   if (del) del.addEventListener('click', deleteItem);
+  // Redrawn after the cropper without going through openSheet.
+  syncSheetWidth();
 }
 
 /* ---- Parts editor on the item form ----

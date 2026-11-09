@@ -136,6 +136,9 @@ img { display: block; }
 .search-row input::placeholder { color: var(--label-tertiary); }
 .search-icon { flex-shrink: 0; color: var(--label-tertiary); display: flex; }
 .search-clear { background: none; border: none; color: var(--label-tertiary); font-size: 15px; cursor: pointer; padding: 2px 4px; flex-shrink: 0; display: flex; }
+/* The app draws its own clear button here; the browser's built-in one sat
+   right next to it, so there were two crosses doing the same job. */
+#searchInput::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
 
 /* ---------- Filter chips ---------- */
 .chiprow { display: flex; gap: 7px; overflow-x: auto; margin-bottom: 14px; scrollbar-width: none; padding-bottom: 2px; }
@@ -145,6 +148,28 @@ img { display: block; }
   padding: 7px 15px; font-size: 13px; font-weight: 600; cursor: pointer; flex-shrink: 0; white-space: nowrap;
 }
 .chip.active { background: var(--sys-blue); color: #fff; }
+/* Dropdown filters on the Stock screen: chips that open a list. Native
+   selects, so a phone shows its own picker wheel. */
+.filter-row { display: flex; flex-wrap: wrap; gap: 7px; margin: -6px 0 14px; }
+.fsel { position: relative; display: inline-flex; flex-shrink: 0; }
+.fsel select {
+  -webkit-appearance: none; appearance: none; background: var(--bg-elevated); color: var(--label-secondary); border: none;
+  border-radius: var(--r-pill); padding: 7px 30px 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+  font-family: inherit; outline: none; max-width: 200px; text-overflow: ellipsis;
+}
+.fsel::after {
+  content: ""; position: absolute; right: 13px; top: 50%; width: 6px; height: 6px; margin-top: -5px; pointer-events: none;
+  border-right: 1.8px solid currentColor; border-bottom: 1.8px solid currentColor; transform: rotate(45deg); color: var(--label-tertiary);
+}
+.fsel.active select { background: var(--sys-blue); color: #fff; }
+.fsel.active::after { color: #fff; }
+.fsel select option { background: var(--bg-elevated); color: var(--label); }
+.filter-clear {
+  display: inline-flex; align-items: center; gap: 4px; background: none; border: none; color: var(--sys-blue);
+  font-size: 13px; font-weight: 600; cursor: pointer; padding: 7px 6px;
+}
+.filter-clear svg { width: 14px; height: 14px; }
+.filter-count { font-size: 12.5px; color: var(--label-secondary); margin: -6px 2px 8px; }
 
 /* ---------- Stat strip ---------- */
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
@@ -258,6 +283,17 @@ img { display: block; }
                scale(calc(1 - var(--sheet-t, 105) * 0.0004));
     opacity: calc(1 - var(--sheet-t, 105) / 105);
   }
+  /* The print preview is a whole A4 page: give it most of the window so it
+     can be read without zooming in. */
+  .sheet.sheet-wide { width: min(max(60vw, 560px), calc(100vw - 48px)); max-width: none; max-height: 92vh; }
+  /* The item form spread out: a photo of sensible height rather than one
+     as tall as the sheet is wide, and the part cards two abreast. */
+  .sheet-wide .photo-tile { aspect-ratio: auto; height: 340px; }
+  .sheet-wide .photo-tile:has(img) { background: #fff; }
+  .sheet-wide .photo-tile img { object-fit: contain; }
+  .sheet-wide #partsList { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .sheet-wide #partsList .part-card { margin-bottom: 0; }
+  .sheet-wide #partsList .parts-sum, .sheet-wide #partsList .empty-note { grid-column: 1 / -1; }
   /* Nothing to drag with a mouse; the scrim and Cancel do the closing. */
   .sheet-handle { display: none; }
 }
