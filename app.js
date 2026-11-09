@@ -275,6 +275,8 @@ const state = {
   people: [],
   reorderCards: [],
   pickLists: [],
+  /* What each item is made of: { product_id, part_id, qty, sort } rows. */
+  productParts: [],
   me: localStorage.getItem('ys_me') || '',
   q: '',
   cat: 'All',
@@ -353,6 +355,33 @@ function needsAttention(p) { return isLow(p) || isZero(p); }
 function qtyClass(p) { return isZero(p) ? 'zero' : isLow(p) ? 'low' : ''; }
 /** Products actually in day-to-day use — dormant catalogue lines sit out of Stock/Racks/Home so they don't clutter live booking, but stay fully visible and editable from Items. */
 function activeProducts() { return state.products.filter(p => !isDormant(p)); }
+
+/* ---- Parts lists ----
+   An item can be made of other items: a dining chair takes a seat pad,
+   four leg glides and six bolts. Only one level deep — a part that has
+   parts of its own is picked as the finished thing it is. */
+function partsOf(productId) {
+  return state.productParts
+    .filter(x => x.product_id === productId && productById(x.part_id))
+    .sort((a, b) => num(a.sort) - num(b.sort));
+}
+function hasParts(productId) { return partsOf(productId).length > 0; }
+/** How many complete items the parts on the shelf will make right now —
+    the scarcest part decides. */
+function buildableCount(productId) {
+  const parts = partsOf(productId);
+  if (!parts.length) return 0;
+  return Math.min.apply(null, parts.map(x => {
+    const per = num(x.qty);
+    return per > 0 ? Math.floor(Math.max(0, num((productById(x.part_id) || {}).qty)) / per) : 0;
+  }));
+}
+function thumbHtml(url, cls) {
+  return url
+    ? '<img class="' + (cls || 'thumb') + '" src="' + escapeHtml(url) + '" alt="" loading="lazy">'
+    : '<span class="' + (cls || 'thumb') + ' thumb-ph">' + I.boxSmall + '</span>';
+}
+
 function movementProductName(m) {
   if (m.product_name) return m.product_name;
   if (m.products && m.products.name) return m.products.name;
@@ -380,14 +409,17 @@ async function refresh(showSpinner) {
       state.products = (await DB.listProducts()) || [];
       state.movements = []; state.people = []; state.reorderCards = []; state.pickLists = [];
     } else {
-      const [products, movements, people, cards, clients, picks, orders] = await Promise.all([
+      const [products, movements, people, cards, clients, picks, orders, parts] = await Promise.all([
         DB.listProducts(), DB.listMovements(300), DB.listPeople(), DB.listReorderCards(),
         DB.listClients().catch(() => []),
         DB.listPickLists().catch(() => []),
         // Empty until the supplier schema is in place, and on a database
         // where it never is — so a failure here must not sink the load.
-        DB.listSupplyOrders().catch(() => [])
+        DB.listSupplyOrders().catch(() => []),
+        // Likewise until schema-assemblies.sql has been run.
+        DB.listProductParts().catch(() => [])
       ]);
+      state.productParts = parts || [];
       state.supplyOrders = orders || [];
       state.products = products || [];
       state.movements = movements || [];
@@ -1816,6 +1848,8 @@ function pickingScreenHtml() {
           (l.status === 'done' ? ' <span class="meta-chip good">done</span>' : '') + '</div>' +
         '<div class="row-meta">' +
           (l.for_whom ? '<span>' + escapeHtml(l.for_whom) + '</span>' : '') +
+          ((l.pick_list_kits || []).length
+            ? '<span class="meta-chip cat">' + l.pick_list_kits.length + ' assembled</span>' : '') +
           '<span>' + got + ' of ' + lines.length + ' picked</span>' +
           '<span>' + escapeHtml(fmtWhen(l.created_at)) + '</span>' +
         '</div>' +
@@ -1843,17 +1877,76 @@ function wirePicking(el) {
     b.addEventListener('click', () => openPickSheet(b.getAttribute('data-openpick'))));
 }
 
-/* ---- Making one ---- */
+/* ---- Making one ----
+   A line is either a single item, or an assembled one (an item with a parts
+   list). An assembled line is entered as "how many to make" and brings its
+   parts with it at exactly parts-per-item × that number, so what is fetched
+   always balances with what is being built — nobody walks off with a fifth
+   leg for a four-legged chair. */
 let pickDraft = null;
 
 function openNewPickSheet() {
-  pickDraft = { title: '', for_whom: '', note: '', lines: [], q: '' };
+  pickDraft = { listId: null, title: '', for_whom: '', lines: [], q: '' };
+  renderNewPickSheet();
+  openSheet();
+}
+/** The same sheet, adding to a list that already exists. */
+function openAddToPickSheet(listId) {
+  pickDraft = { listId: listId, title: '', for_whom: '', lines: [], q: '' };
   renderNewPickSheet();
   openSheet();
 }
 
+/** Lines that would not balance — asking for more than the shelf can make —
+    are allowed (stock may be on its way) but said out loud. */
+function kitWarnText(productId, qty) {
+  const can = buildableCount(productId);
+  return num(qty) > can ? 'Stock makes only ' + fmtQty(can) : '';
+}
+
+function draftLineHtml(l) {
+  const p = productById(l.product_id);
+  const trash = '<button class="row-trail part-drop" data-pkdrop="' + escapeHtml(l.product_id) + '" type="button" aria-label="Remove">' + I.trash + '</button>';
+  const qtyBox = '<input class="pick-qty" type="number" inputmode="decimal" min="0" step="any" value="' + escapeHtml(l.qty) + '" data-pkqty="' + escapeHtml(l.product_id) + '">';
+  if (!p || !hasParts(p.id)) {
+    return '<div class="row"><div class="row-body">' +
+        '<div class="row-title">' + escapeHtml(p ? p.name : 'Item') + '</div>' +
+        '<div class="row-meta">' + escapeHtml(formatLocs(p && p.location) || 'No location') + ' · ' + fmtQty(p ? p.qty : 0) + ' in stock</div>' +
+      '</div>' + qtyBox + trash + '</div>';
+  }
+  const parts = partsOf(p.id);
+  const warn = kitWarnText(p.id, l.qty);
+  return '<div class="pk-draft-kit">' +
+    '<div class="row">' +
+      thumbHtml(p.photo_url, 'thumb part-thumb') +
+      '<div class="row-body">' +
+        '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
+        '<div class="row-meta"><span>' + parts.length + ' part' + (parts.length === 1 ? '' : 's') + '</span>' +
+          '<span class="meta-chip warn" data-kitwarn="' + escapeHtml(p.id) + '"' + (warn ? '' : ' hidden') + '>' + escapeHtml(warn) + '</span></div>' +
+      '</div>' +
+      '<label class="part-per">' + qtyBox + '<small>to make</small></label>' + trash +
+    '</div>' +
+    parts.map(x => {
+      const part = productById(x.part_id);
+      return '<div class="pk-draft-part">' +
+        '<span class="pk-draft-name">' + escapeHtml(part.name) + '</span>' +
+        '<span class="pk-draft-math">' + fmtQty(x.qty) + ' × <b data-kittot="' + escapeHtml(p.id) + '" data-per="' + escapeHtml(x.qty) + '">' +
+          fmtQty(num(x.qty) * num(l.qty)) + '</b> ' + escapeHtml(part.unit || 'ea') + '</span>' +
+      '</div>';
+    }).join('') +
+    '<div class="form-field-pair pk-draft-ref">' +
+      '<label class="form-field"><div class="ff-label">Order no.</div>' +
+        '<input type="text" value="' + escapeHtml(l.order_ref || '') + '" placeholder="Optional" data-pkorder="' + escapeHtml(p.id) + '"></label>' +
+      '<label class="form-field"><div class="ff-label">Client</div>' +
+        '<input type="text" value="' + escapeHtml(l.client_name || '') + '" placeholder="Optional" data-pkclient="' + escapeHtml(p.id) + '"></label>' +
+    '</div>' +
+  '</div>';
+}
+
 function renderNewPickSheet() {
   const d = pickDraft;
+  const adding = !!d.listId;
+  const target = adding ? state.pickLists.find(l => l.id === d.listId) : null;
   const q = d.q.trim().toLowerCase();
   const matches = q
     ? activeProducts()
@@ -1864,28 +1957,21 @@ function renderNewPickSheet() {
 
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
-    '<div class="sheet-title">New picking list</div>' +
-    '<div class="sheet-sub">What is needed, and who is fetching it.</div>' +
-    '<div class="form-card">' +
-      '<label class="form-field"><div class="ff-label">What is it for</div>' +
-        '<input id="pkTitle" type="text" value="' + escapeHtml(d.title) + '" placeholder="e.g. Job 1042 — oak table run"></label>' +
-      '<label class="form-field"><div class="ff-label">Who is fetching it</div>' +
-        '<input id="pkFor" type="text" value="' + escapeHtml(d.for_whom) + '" placeholder="e.g. Pieter"></label>' +
-    '</div>' +
+    '<div class="sheet-title">' + (adding ? 'Add to ' + escapeHtml(target ? target.title : 'list') : 'New picking list') + '</div>' +
+    '<div class="sheet-sub">' + (adding ? 'Add single items or assembled ones.' : 'What is needed, and who is fetching it.') + '</div>' +
+    (adding ? '' :
+      '<div class="form-card">' +
+        '<label class="form-field"><div class="ff-label">What is it for</div>' +
+          '<input id="pkTitle" type="text" value="' + escapeHtml(d.title) + '" placeholder="e.g. Job 1042 — oak table run"></label>' +
+        '<label class="form-field"><div class="ff-label">Who is fetching it</div>' +
+          '<input id="pkFor" type="text" value="' + escapeHtml(d.for_whom) + '" placeholder="e.g. Pieter"></label>' +
+      '</div>') +
 
     '<div class="field-label">Items' + (d.lines.length ? ' · ' + d.lines.length : '') + '</div>' +
     '<div class="group" style="margin-bottom:10px;">' +
       (d.lines.length
-        ? d.lines.map(l => {
-            const p = productById(l.product_id);
-            return '<div class="row"><div class="row-body">' +
-              '<div class="row-title">' + escapeHtml(p ? p.name : 'Item') + '</div>' +
-              '<div class="row-meta">' + escapeHtml(formatLocs(p && p.location) || 'No location') + ' · ' + fmtQty(p ? p.qty : 0) + ' in stock</div>' +
-            '</div>' +
-            '<input class="pick-qty" type="number" inputmode="decimal" min="0" step="any" value="' + escapeHtml(l.qty) + '" data-pkqty="' + escapeHtml(l.product_id) + '">' +
-            '<button class="row-trail" data-pkdrop="' + escapeHtml(l.product_id) + '" type="button" style="background:none;border:none;color:var(--label-tertiary);cursor:pointer;padding:6px;">' + I.trash + '</button></div>';
-          }).join('')
-        : '<div class="empty-note">Nothing on the list yet. Search below and tap to add.</div>') +
+        ? d.lines.map(draftLineHtml).join('')
+        : '<div class="empty-note">Nothing on the list yet. Search below and tap to add. An item with a parts list brings its parts with it.</div>') +
     '</div>' +
 
     '<div class="search-row" style="background:var(--bg-elevated-2);">' +
@@ -1893,64 +1979,123 @@ function renderNewPickSheet() {
       '<input type="search" id="pkSearch" placeholder="Add an item — name, SKU or rack" value="' + escapeHtml(d.q) + '" autocomplete="off">' +
     '</div>' +
     (matches.length
-      ? '<div class="group" style="margin-bottom:10px;">' + matches.map(p =>
-          '<div class="row"><div class="row-body" data-pkadd="' + escapeHtml(p.id) + '">' +
+      ? '<div class="group" style="margin-bottom:10px;">' + matches.map(p => {
+          const n = partsOf(p.id).length;
+          return '<div class="row"><div class="row-body" data-pkadd="' + escapeHtml(p.id) + '">' +
             '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
-            '<div class="row-meta">' + escapeHtml(formatLocs(p.location) || 'No location') + ' · ' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + ' in stock</div>' +
-          '</div><span class="row-trail">' + I.plus + '</span></div>').join('') + '</div>'
+            '<div class="row-meta">' +
+              (n ? '<span class="meta-chip cat">' + n + ' part' + (n === 1 ? '' : 's') + '</span>' : '') +
+              '<span>' + escapeHtml(formatLocs(p.location) || 'No location') + ' · ' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + ' in stock</span>' +
+            '</div>' +
+          '</div><span class="row-trail">' + I.plus + '</span></div>';
+        }).join('') + '</div>'
       : (q ? '<div class="empty-note">Nothing matches that.</div>' : '')) +
 
     '<div class="sheet-actions">' +
       '<button class="sheet-cancel" data-close type="button">Cancel</button>' +
-      '<button class="sheet-save" data-save type="button">Create list</button>' +
+      '<button class="sheet-save" data-save type="button">' + (adding ? 'Add to list' : 'Create list') + '</button>' +
     '</div>';
 
   const search = $('pkSearch');
   search.addEventListener('input', () => { pickDraft.q = search.value; renderNewPickSheet(); });
-  $('pkTitle').addEventListener('input', (e) => { pickDraft.title = e.target.value; });
-  $('pkFor').addEventListener('input', (e) => { pickDraft.for_whom = e.target.value; });
+  if ($('pkTitle')) $('pkTitle').addEventListener('input', (e) => { pickDraft.title = e.target.value; });
+  if ($('pkFor')) $('pkFor').addEventListener('input', (e) => { pickDraft.for_whom = e.target.value; });
 
+  const lineOf = (pid) => pickDraft.lines.find(l => l.product_id === pid);
   sheetEl.querySelectorAll('[data-pkadd]').forEach(b => b.addEventListener('click', () => {
-    const id = b.getAttribute('data-pkadd');
-    pickDraft.lines.push({ product_id: id, qty: 1 });
+    pickDraft.lines.push({ product_id: b.getAttribute('data-pkadd'), qty: 1, order_ref: '', client_name: '' });
     pickDraft.q = '';
     renderNewPickSheet();
   }));
   sheetEl.querySelectorAll('[data-pkqty]').forEach(i => i.addEventListener('input', () => {
-    const line = pickDraft.lines.find(l => l.product_id === i.getAttribute('data-pkqty'));
-    if (line) line.qty = i.value;
+    const pid = i.getAttribute('data-pkqty');
+    const line = lineOf(pid);
+    if (!line) return;
+    line.qty = i.value;
+    // The parts follow the count as it is typed, without a re-render that
+    // would close the keyboard.
+    sheetEl.querySelectorAll('[data-kittot="' + pid + '"]').forEach(s => {
+      s.textContent = fmtQty(num(s.getAttribute('data-per')) * num(i.value));
+    });
+    const w = sheetEl.querySelector('[data-kitwarn="' + pid + '"]');
+    if (w) { const t = kitWarnText(pid, i.value); w.textContent = t; w.hidden = !t; }
+  }));
+  sheetEl.querySelectorAll('[data-pkorder]').forEach(i => i.addEventListener('input', () => {
+    const line = lineOf(i.getAttribute('data-pkorder')); if (line) line.order_ref = i.value;
+  }));
+  sheetEl.querySelectorAll('[data-pkclient]').forEach(i => i.addEventListener('input', () => {
+    const line = lineOf(i.getAttribute('data-pkclient')); if (line) line.client_name = i.value;
   }));
   sheetEl.querySelectorAll('[data-pkdrop]').forEach(b => b.addEventListener('click', () => {
     pickDraft.lines = pickDraft.lines.filter(l => l.product_id !== b.getAttribute('data-pkdrop'));
     renderNewPickSheet();
   }));
-  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+  sheetEl.querySelector('[data-close]').addEventListener('click', () => {
+    if (adding) openPickSheet(d.listId); else closeSheet();
+  });
   sheetEl.querySelector('[data-save]').addEventListener('click', savePickList);
 
   if (pickDraft.q) { search.focus(); search.setSelectionRange(search.value.length, search.value.length); }
 }
 
+/** A database without schema-assemblies.sql fails on the new table and
+    columns. Say what is missing instead of a raw server message. */
+function assemblySchemaMessage(e) {
+  const m = String((e && e.message) || '');
+  return /pick_list_kits|kit_id|per_unit|received|picked_by|received_by|product_parts/.test(m)
+    ? 'The database needs the assemblies update (schema-assemblies.sql) first'
+    : (m || 'Could not save that');
+}
+
 async function savePickList() {
   const d = pickDraft;
-  d.title = ($('pkTitle').value || '').trim();
-  d.for_whom = ($('pkFor').value || '').trim();
-  if (!d.title) { $('pkTitle').focus(); toast('Give the list a name'); return; }
+  const adding = !!d.listId;
+  if (!adding) {
+    d.title = ($('pkTitle').value || '').trim();
+    d.for_whom = ($('pkFor').value || '').trim();
+    if (!d.title) { $('pkTitle').focus(); toast('Give the list a name'); return; }
+  }
   const lines = d.lines.filter(l => num(l.qty) > 0);
   if (!lines.length) { toast('Add at least one item'); return; }
 
   const btn = sheetEl.querySelector('[data-save]');
-  btn.disabled = true; btn.textContent = 'Creating…';
+  btn.disabled = true; btn.textContent = adding ? 'Adding…' : 'Creating…';
+  let listId = d.listId;
   try {
-    const list = await DB.createPickList({
-      title: d.title, for_whom: d.for_whom || null, created_by: state.me || null
-    });
-    await DB.addPickItems(list.id, lines.map(l => ({ product_id: l.product_id, qty: num(l.qty) })));
+    if (!listId) {
+      const list = await DB.createPickList({
+        title: d.title, for_whom: d.for_whom || null, created_by: state.me || null
+      });
+      listId = list.id;
+    }
+    const existing = state.pickLists.find(l => l.id === listId);
+    let sort = existing ? (existing.pick_list_kits || []).length : 0;
+    const singles = [];
+    for (const l of lines) {
+      const parts = partsOf(l.product_id);
+      if (!parts.length) { singles.push({ product_id: l.product_id, qty: num(l.qty) }); continue; }
+      const kit = await DB.createPickKit({
+        list_id: listId, product_id: l.product_id, qty: num(l.qty), sort: sort++,
+        order_ref: (l.order_ref || '').trim() || null, client_name: (l.client_name || '').trim() || null
+      });
+      await DB.addPickItems(listId, parts.map(x => ({
+        product_id: x.part_id, qty: num(x.qty) * num(l.qty), per_unit: num(x.qty), kit_id: kit.id
+      })));
+    }
+    if (singles.length) await DB.addPickItems(listId, singles);
     await refresh();
-    toast('Picking list created · ' + d.title, 'good');
-    openPickSheet(list.id);
+    toast((adding ? 'Added to ' : 'Picking list created · ') + (existing ? existing.title : d.title), 'good');
+    openPickSheet(listId);
   } catch (e) {
-    toast(e.message || 'Could not create that list', 'bad');
-    btn.disabled = false; btn.textContent = 'Create list';
+    toast(assemblySchemaMessage(e), 'bad');
+    if (listId && !adding) {
+      // The list itself exists by now. Show it, rather than putting the
+      // Create button back and inviting a second copy of it.
+      await refresh();
+      openPickSheet(listId);
+      return;
+    }
+    btn.disabled = false; btn.textContent = adding ? 'Add to list' : 'Create list';
   }
 }
 
@@ -1960,44 +2105,138 @@ function openPickSheet(id) {
   openSheet();
 }
 
+/** The assembled items on a list, in the order they were added. */
+function pickKits(list) {
+  return (list.pick_list_kits || []).slice().sort((a, b) =>
+    num(a.sort) - num(b.sort) || String(a.created_at).localeCompare(String(b.created_at)));
+}
+function kitLines(list, kit) {
+  return pickLines({ pick_list_items: (list.pick_list_items || []).filter(l => l.kit_id === kit.id) });
+}
+/** Lines that belong to no assembled item — including every line on a list
+    made before assembled items existed. */
+function looseLines(list) {
+  const ids = pickKits(list).map(k => k.id);
+  return pickLines({ pick_list_items: (list.pick_list_items || []).filter(l => !l.kit_id || ids.indexOf(l.kit_id) === -1) });
+}
+function kitProduct(kit) { return productById(kit.product_id); }
+
+function pickLineRowHtml(l, finished) {
+  const p = productById(l.product_id);
+  const short = !finished && !l.picked && p && num(p.qty) < num(l.qty);
+  const photo = (l.products && l.products.photo_url) || (p && p.photo_url);
+  return '<div class="row pick-row ' + (l.picked ? 'picked' : '') + '">' +
+    '<button class="pick-tick ' + (l.picked ? 'on' : '') + '" data-pktick="' + escapeHtml(l.id) + '" type="button" ' +
+      (finished ? 'disabled' : '') + ' aria-label="Picked">' + (l.picked ? I.check : '') + '</button>' +
+    thumbHtml(photo, 'thumb part-thumb') +
+    '<div class="row-body" data-pkitem="' + escapeHtml(l.product_id) + '">' +
+      '<div class="row-title">' + escapeHtml(pickLineName(l)) + '</div>' +
+      '<div class="row-meta"><span class="row-mono">' + escapeHtml(formatLocs(pickLineLoc(l)) || 'No location') + '</span>' +
+        (l.per_unit != null && l.kit_id ? '<span>' + fmtQty(l.per_unit) + ' each</span>' : '') +
+        (short ? '<span class="meta-chip warn">only ' + fmtQty(p.qty) + ' in stock</span>' : '') + '</div>' +
+    '</div>' +
+    '<span class="pick-need">' + fmtQty(l.qty) + '<small>' + escapeHtml(pickLineUnit(l)) + '</small></span>' +
+    '<button class="pick-tick recv-tick ' + (l.received ? 'on' : '') + '" data-pkrecv="' + escapeHtml(l.id) + '" type="button" ' +
+      (l.picked ? '' : 'disabled') + ' aria-label="Received">' + (l.received ? I.check : '') + '</button>' +
+  '</div>';
+}
+
+/** Who picked it and who took it, as two boxes side by side. Saved as soon
+    as the box is left. */
+function namePairHtml(kind, id, picked, received) {
+  return '<div class="form-card pk-names"><div class="form-field-pair">' +
+    '<label class="form-field"><div class="ff-label">Picked by</div>' +
+      '<input type="text" list="pkPeople" value="' + escapeHtml(picked || '') + '" placeholder="Name" data-pkname="' + kind + ':' + escapeHtml(id) + ':picked_by"></label>' +
+    '<label class="form-field"><div class="ff-label">Received by</div>' +
+      '<input type="text" list="pkPeople" value="' + escapeHtml(received || '') + '" placeholder="Name" data-pkname="' + kind + ':' + escapeHtml(id) + ':received_by"></label>' +
+  '</div></div>';
+}
+
+function kitCardHtml(list, kit, i, n, finished) {
+  const p = kitProduct(kit);
+  const lines = kitLines(list, kit);
+  const got = lines.filter(l => l.picked).length;
+  const total = lines.reduce((s, l) => s + num(l.qty), 0);
+  const warn = !finished && !got && p ? kitWarnText(p.id, kit.qty) : '';
+  const info = (label, val, cls) => val
+    ? '<div class="kit-info-item"><div class="kit-info-k">' + label + '</div><div class="kit-info-v' + (cls ? ' ' + cls : '') + '">' + escapeHtml(val) + '</div></div>'
+    : '';
+  return '<div class="field-label kit-label">' +
+      '<span>Item ' + (i + 1) + ' of ' + n + (kit.order_ref ? ' · Order ' + escapeHtml(kit.order_ref) : '') + '</span>' +
+      '<span class="kit-label-count">' + got + ' of ' + lines.length + ' picked</span>' +
+    '</div>' +
+    '<div class="kit-card">' +
+      '<div class="kit-hero">' +
+        thumbHtml(p && p.photo_url, 'kit-photo') +
+        '<div class="kit-hero-body">' +
+          '<div class="kit-name">' + escapeHtml(p ? p.name : 'Deleted item') +
+            (p && p.code ? ' <span class="meta-chip code">' + escapeHtml(p.code) + '</span>' : '') + '</div>' +
+          '<div class="kit-info">' +
+            info('Client', kit.client_name) +
+            info('Stored at', p && formatLocs(p.location), 'row-mono') +
+            info('Place of use', p && p.place_of_use) +
+          '</div>' +
+        '</div>' +
+        '<div class="kit-make"><span class="kit-make-n">' + fmtQty(kit.qty) + '</span><span class="kit-make-l">to make</span></div>' +
+      '</div>' +
+      (warn ? '<div class="kit-warn">' + escapeHtml(warn) + ' with what is on the shelf.</div>' : '') +
+      namePairHtml('kit', kit.id, kit.picked_by, kit.received_by) +
+      '<div class="kit-cols"><span>Picked</span><span>Received</span></div>' +
+      '<div class="group kit-parts">' + lines.map(l => pickLineRowHtml(l, finished)).join('') + '</div>' +
+      '<div class="kit-foot">' +
+        '<span>' + fmtQty(total) + ' part' + (total === 1 ? '' : 's') + ' for ' + fmtQty(kit.qty) + '</span>' +
+        (!finished && !got ? '<button class="link-btn kit-remove" data-kitdel="' + escapeHtml(kit.id) + '" type="button">Remove from list</button>' : '') +
+      '</div>' +
+    '</div>';
+}
+
 function renderPickSheet(id) {
   const list = state.pickLists.find(l => l.id === id);
   if (!list) { closeSheet(); return; }
-  const lines = pickLines(list);
-  const got = lines.filter(l => l.picked).length;
+  const all = list.pick_list_items || [];
+  const got = all.filter(l => l.picked).length;
   const finished = list.status === 'done';
+  const kits = pickKits(list);
+  const loose = looseLines(list);
+  const orders = kits.filter(k => k.order_ref).map(k => k.order_ref + (k.client_name ? ' · ' + k.client_name : ''));
 
   sheetEl.innerHTML =
     '<div class="sheet-handle"></div>' +
     '<div class="sheet-title">' + escapeHtml(list.title) + '</div>' +
     '<div class="sheet-sub">' +
       (list.for_whom ? 'For ' + escapeHtml(list.for_whom) + ' · ' : '') +
-      got + ' of ' + lines.length + ' picked' +
+      got + ' of ' + all.length + ' picked' +
       (finished ? ' · finished ' + escapeHtml(fmtWhen(list.done_at)) : '') +
     '</div>' +
+    '<datalist id="pkPeople">' + state.people.map(p => '<option value="' + escapeHtml(p.name) + '">').join('') + '</datalist>' +
 
-    '<div class="group" style="margin-bottom:12px;">' +
-      lines.map(l => {
-        const p = productById(l.product_id);
-        const short = p && num(p.qty) < num(l.qty);
-        return '<div class="row pick-row ' + (l.picked ? 'picked' : '') + '">' +
-          '<button class="pick-tick ' + (l.picked ? 'on' : '') + '" data-pktick="' + escapeHtml(l.id) + '" type="button" ' + (finished ? 'disabled' : '') + '>' +
-            (l.picked ? I.check : '') + '</button>' +
-          '<div class="row-body" data-pkitem="' + escapeHtml(l.product_id) + '">' +
-            '<div class="row-title">' + escapeHtml(pickLineName(l)) + '</div>' +
-            '<div class="row-meta"><span class="row-mono">' + escapeHtml(formatLocs(pickLineLoc(l)) || 'No location') + '</span>' +
-              (short ? '<span class="meta-chip warn">only ' + fmtQty(p.qty) + ' in stock</span>' : '') + '</div>' +
-          '</div>' +
-          '<span class="pick-need">' + fmtQty(l.qty) + '<small>' + escapeHtml(pickLineUnit(l)) + '</small></span>' +
-        '</div>';
-      }).join('') +
+    '<div class="field-group">' +
+      '<div class="field-row"><span class="fname">Created by</span><span class="field-val">' +
+        escapeHtml(list.created_by || '—') + ' · ' + escapeHtml(fmtWhen(list.created_at)) + '</span></div>' +
+      (orders.length
+        ? '<div class="field-row field-row-stack"><span class="fname">Orders on this list</span>' +
+            '<div class="kit-orders">' + orders.map(o => '<span class="meta-chip">' + escapeHtml(o) + '</span>').join('') + '</div></div>'
+        : '') +
     '</div>' +
+
+    (loose.length
+      ? '<div class="field-label kit-label"><span>Single items</span>' +
+          '<span class="kit-label-count">' + loose.filter(l => l.picked).length + ' of ' + loose.length + ' picked</span></div>' +
+        namePairHtml('list', list.id, list.picked_by, list.received_by) +
+        '<div class="kit-cols"><span>Picked</span><span>Received</span></div>' +
+        '<div class="group" style="margin-bottom:12px;">' + loose.map(l => pickLineRowHtml(l, finished)).join('') + '</div>'
+      : '') +
+
+    kits.map((k, i) => kitCardHtml(list, k, i, kits.length, finished)).join('') +
 
     (finished
       ? ''
       : '<div class="sheet-actions" style="margin-bottom:10px;">' +
+          '<button class="sheet-cancel" data-pkaddmore type="button" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;">' + I.plus + ' Add item</button>' +
           '<button class="sheet-cancel" data-pkprint type="button" style="display:inline-flex;align-items:center;justify-content:center;gap:6px;">' + I.print + ' Print list</button>' +
-          '<button class="sheet-save" data-pkdone type="button" ' + (got === lines.length && lines.length ? '' : 'disabled') + '>Book out picked</button>' +
+        '</div>' +
+        '<div class="sheet-actions" style="margin-top:0;margin-bottom:10px;">' +
+          '<button class="sheet-save" data-pkdone type="button" ' + (got === all.length && all.length ? '' : 'disabled') + '>Book out picked</button>' +
         '</div>') +
 
     '<div class="sheet-actions">' +
@@ -2006,19 +2245,50 @@ function renderPickSheet(id) {
       '<button class="sheet-delete" data-pkdel type="button">' + I.trash + '</button>' +
     '</div>';
 
+  const findLine = (lineId) => all.find(x => x.id === lineId);
   sheetEl.querySelectorAll('[data-pktick]').forEach(b => b.addEventListener('click', async () => {
-    const lineId = b.getAttribute('data-pktick');
-    const line = (list.pick_list_items || []).find(x => x.id === lineId);
+    const line = findLine(b.getAttribute('data-pktick'));
     if (!line) return;
+    const was = { picked: !!line.picked, received: !!line.received };
     line.picked = !line.picked;          // optimistic: the tick must feel instant
+    // Un-picking something cannot leave it marked as handed over.
+    const patch = { picked: line.picked };
+    if (!line.picked && line.received) { line.received = false; patch.received = false; }
     renderPickSheet(id);
-    try { await DB.updatePickItem(lineId, { picked: line.picked }); }
-    catch (e) { line.picked = !line.picked; renderPickSheet(id); toast(e.message || 'Could not save that', 'bad'); }
+    try { await DB.updatePickItem(line.id, patch); }
+    catch (e) { Object.assign(line, was); renderPickSheet(id); toast(e.message || 'Could not save that', 'bad'); }
+  }));
+  sheetEl.querySelectorAll('[data-pkrecv]').forEach(b => b.addEventListener('click', async () => {
+    const line = findLine(b.getAttribute('data-pkrecv'));
+    if (!line) return;
+    line.received = !line.received;
+    renderPickSheet(id);
+    try { await DB.updatePickItem(line.id, { received: line.received }); }
+    catch (e) { line.received = !line.received; renderPickSheet(id); toast(assemblySchemaMessage(e), 'bad'); }
+  }));
+  sheetEl.querySelectorAll('[data-pkname]').forEach(input => input.addEventListener('change', async () => {
+    const [kind, rowId, field] = input.getAttribute('data-pkname').split(':');
+    const value = input.value.trim() || null;
+    const row = kind === 'kit' ? (list.pick_list_kits || []).find(k => k.id === rowId) : list;
+    try {
+      if (kind === 'kit') await DB.updatePickKit(rowId, { [field]: value });
+      else await DB.updatePickList(rowId, { [field]: value });
+      if (row) row[field] = value;
+    } catch (e) { toast(assemblySchemaMessage(e), 'bad'); }
   }));
   sheetEl.querySelectorAll('[data-pkitem]').forEach(b =>
     b.addEventListener('click', () => openProductDetail(b.getAttribute('data-pkitem'))));
   sheetEl.querySelectorAll('[data-pkprint]').forEach(b =>
-    b.addEventListener('click', () => printPickList(list)));
+    b.addEventListener('click', () => openPickPrintSheet(list.id)));
+  const more = sheetEl.querySelector('[data-pkaddmore]');
+  if (more) more.addEventListener('click', () => openAddToPickSheet(list.id));
+  sheetEl.querySelectorAll('[data-kitdel]').forEach(b => b.addEventListener('click', async () => {
+    const kit = (list.pick_list_kits || []).find(k => k.id === b.getAttribute('data-kitdel'));
+    const p = kit && kitProduct(kit);
+    if (!confirm('Take ' + (p ? p.name : 'this item') + ' and its parts off the list?')) return;
+    try { await DB.removePickKit(kit.id); await refresh(); renderPickSheet(id); }
+    catch (e) { toast(e.message || 'Could not remove that', 'bad'); }
+  }));
   sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
 
   const doneBtn = sheetEl.querySelector('[data-pkdone]');
@@ -2036,7 +2306,8 @@ function renderPickSheet(id) {
 }
 
 /** Booking the whole list out in one go, rather than one movement at a time
-    through the move sheet. Each line still lands in the log on its own. */
+    through the move sheet. Each line still lands in the log on its own, and
+    a part says which assembled item it went into. */
 async function finishPickList(list) {
   const lines = (list.pick_list_items || []).filter(l => l.picked);
   if (!lines.length) return;
@@ -2044,12 +2315,16 @@ async function finishPickList(list) {
 
   const btn = sheetEl.querySelector('[data-pkdone]');
   if (btn) { btn.disabled = true; btn.textContent = 'Booking out…'; }
+  const kits = list.pick_list_kits || [];
   const failed = [];
   for (const l of lines) {
+    const kit = l.kit_id && kits.find(k => k.id === l.kit_id);
+    const kp = kit && kitProduct(kit);
     try {
       await DB.applyMovement({
         productId: l.product_id, delta: -num(l.qty), reason: 'out',
-        person: state.me || '', note: 'Picked · ' + list.title
+        person: state.me || '',
+        note: 'Picked · ' + list.title + (kp ? ' · for ' + fmtQty(kit.qty) + ' × ' + kp.name : '')
       });
     } catch (e) { failed.push(pickLineName(l)); }
   }
@@ -2063,45 +2338,213 @@ async function finishPickList(list) {
 }
 
 /* ---- On paper ----
-   For whoever is walking the racks without a phone: rack order, big tick
-   boxes, and room to write what was actually taken when it differs. */
-function pickListHtml(list) {
-  const lines = pickLines(list);
-  return '<div class="plist">' +
-    '<div class="plist-head">' +
-      '<div class="plist-title">' + escapeHtml(list.title) + '</div>' +
-      '<div class="plist-meta">' +
-        (list.for_whom ? '<span><b>For:</b> ' + escapeHtml(list.for_whom) + '</span>' : '') +
-        '<span><b>Raised:</b> ' + escapeHtml(fmtWhen(list.created_at)) + (list.created_by ? ' by ' + escapeHtml(list.created_by) : '') + '</span>' +
-        '<span><b>Lines:</b> ' + lines.length + '</span>' +
-      '</div>' +
-    '</div>' +
-    '<table class="plist-table">' +
-      '<thead><tr>' +
-        '<th class="pl-tick">Got</th><th class="pl-loc">Location</th><th>Item</th>' +
-        '<th class="pl-sku">SKU</th><th class="pl-qty">Qty</th><th class="pl-took">Taken</th>' +
-      '</tr></thead><tbody>' +
-      lines.map(l => {
-        const p = productById(l.product_id);
-        const sku = (l.products && l.products.code) || (p && p.code) || '';
-        return '<tr>' +
-          '<td class="pl-tick"><span class="pl-box"></span></td>' +
-          '<td class="pl-loc">' + (sortLocs(pickLineLoc(l)).map(escapeHtml).join('<br>') || '—') + '</td>' +
-          '<td>' + escapeHtml(pickLineName(l)) + '</td>' +
-          '<td class="pl-sku">' + escapeHtml(sku) + '</td>' +
-          '<td class="pl-qty">' + fmtQty(l.qty) + ' ' + escapeHtml(pickLineUnit(l)) + '</td>' +
-          '<td class="pl-took"></td>' +
-        '</tr>';
-      }).join('') +
-    '</tbody></table>' +
-    '<div class="plist-foot">' +
-      '<div class="plist-sign"><span>Picked by</span></div>' +
-      '<div class="plist-sign"><span>Date</span></div>' +
-      '<div class="plist-sign"><span>Received by</span></div>' +
-    '</div>' +
+   Laid out like the agreed picking-list screen: the list number and how far
+   along it is, a card with the orders on it, then one card per assembled
+   item with its photo, a big "complete items" count, boxes for who picked
+   and who received it, and a table of its parts with large photos and
+   tick boxes. Lines already ticked in the app print ticked, on green.
+
+   Page rule: single items and small assemblies (one or two parts) share
+   pages; anything with more parts than that gets a page to itself, so its
+   sheet can travel with the job. */
+const PRINT_OWN_PAGE_PARTS = 2;
+
+const PL_PHOTO_PH =
+  '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M7 3h10v9H7z"></path><path d="M5 12h14v3H5z"></path><path d="M6 15v6M18 15v6M8 15v3M16 15v3"></path></svg>';
+const PL_IMG_PH =
+  '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.6"></circle><path d="M21 16l-5-5-8 8"></path></svg>';
+const PL_TICK =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>';
+
+function plStatusText(list) {
+  const lines = list.pick_list_items || [];
+  const done = lines.filter(l => l.picked).length;
+  if (list.status === 'done') return { cls: 'done', text: 'Booked out' };
+  if (lines.length && done === lines.length) return { cls: 'done', text: 'Picked · all ' + lines.length + ' lines done' };
+  if (!done) return { cls: 'new', text: 'To pick · ' + lines.length + ' line' + (lines.length === 1 ? '' : 's') };
+  return { cls: 'busy', text: 'Being picked · ' + done + ' of ' + lines.length + ' lines done' };
+}
+
+function plHeadHtml(list, compact) {
+  const st = plStatusText(list);
+  return '<div class="pl-head' + (compact ? ' pl-head-sm' : '') + '">' +
+    '<h1>Picking List <span class="pl-no">' + escapeHtml(list.title) + '</span></h1>' +
+    (compact ? '' : '<span class="pl-status pl-status-' + st.cls + '">' + escapeHtml(st.text) + '</span>') +
+    '<span class="pl-co">' + escapeHtml(CFG.SITE_NAME || 'Yard Stock') + '</span>' +
   '</div>';
 }
 
+function plLabel(text) { return '<span class="pl-cap">' + text + '</span>'; }
+
+function plInfoHtml(list) {
+  const kits = pickKits(list);
+  const seen = {};
+  const orders = kits.filter(k => k.order_ref || k.client_name).map(k => {
+    const t = [k.order_ref, k.client_name].filter(Boolean).join(' · ');
+    if (seen[t]) return '';
+    seen[t] = true;
+    return '<span class="pl-chip">' + escapeHtml(t) + '</span>';
+  }).join('');
+  return '<section class="pl-card pl-info">' +
+    '<div class="pl-info-orders">' + plLabel('Orders on this list') +
+      '<div class="pl-chips">' + (orders || '<span class="pl-none">None given</span>') + '</div></div>' +
+    '<div>' + plLabel('Created by') + '<span class="pl-info-v">' +
+      escapeHtml(list.created_by || '—') + ' · ' + escapeHtml(fmtDate(list.created_at)) + '</span></div>' +
+    (list.for_whom ? '<div>' + plLabel('Fetched by') + '<span class="pl-info-v">' + escapeHtml(list.for_whom) + '</span></div>' : '') +
+  '</section>';
+}
+
+function plImgCellHtml(url) {
+  return '<td class="pl-c-img"><div class="pl-img">' +
+    (url ? '<img src="' + escapeHtml(url) + '" alt="">' : PL_IMG_PH) + '</div></td>';
+}
+function plTickCell(on) {
+  return '<td class="pl-c-box"><span class="pl-box' + (on ? ' on' : '') + '">' + (on ? PL_TICK : '') + '</span></td>';
+}
+
+/** One table for both kinds of line: an assembled item's parts carry a
+    "per item" column and a total row, single items do not. */
+function plTableHtml(lines, kitName) {
+  const perCol = !!kitName;
+  let sum = 0;
+  const rows = lines.map(l => {
+    const p = productById(l.product_id);
+    const photo = (l.products && l.products.photo_url) || (p && p.photo_url);
+    const sku = (l.products && l.products.code) || (p && p.code) || '';
+    sum += num(l.qty);
+    return '<tr' + (l.picked ? ' class="pl-row-done"' : '') + '>' +
+      plImgCellHtml(photo) +
+      '<td class="pl-c-name">' + escapeHtml(pickLineName(l)) +
+        (sku ? '<span class="pl-code">' + escapeHtml(sku) + '</span>' : '') + '</td>' +
+      '<td class="pl-c-loc">' + (sortLocs(pickLineLoc(l)).map(escapeHtml).join(', ') || '—') + '</td>' +
+      (perCol ? '<td class="pl-c-num">' + fmtQty(l.per_unit) + '</td>' : '') +
+      '<td class="pl-c-num pl-c-total">' + fmtQty(l.qty) + '</td>' +
+      plTickCell(l.picked) + plTickCell(l.received) +
+    '</tr>';
+  }).join('');
+  return '<table class="pl-table"><thead><tr>' +
+      '<th class="pl-c-img">Image</th><th>' + (perCol ? 'Component' : 'Item') + '</th><th>Location</th>' +
+      (perCol ? '<th class="pl-c-num">Per item</th><th class="pl-c-num">Total qty</th>' : '<th class="pl-c-num">Qty</th>') +
+      '<th class="pl-c-box">Picked</th><th class="pl-c-box">Received</th>' +
+    '</tr></thead><tbody>' + rows + '</tbody>' +
+    (perCol
+      ? '<tfoot><tr><td colspan="4">Total for ' + escapeHtml(kitName) + '</td>' +
+          '<td class="pl-c-num pl-c-total">' + fmtQty(sum) + '</td>' +
+          '<td></td><td></td></tr></tfoot>'
+      : '') +
+    '</table>';
+}
+
+/** Who picked it and who took it, as boxes to write in. Names already
+    entered in the app are printed in them. */
+function plNamesHtml(picked, received, note) {
+  const box = (label, val, ph) => '<div class="pl-name">' + plLabel(label) +
+    '<div class="pl-name-box">' + (val ? escapeHtml(val) : '<span>' + ph + '</span>') + '</div></div>';
+  return '<div class="pl-names">' +
+    '<div class="pl-names-l">' + box('Picked by', picked, "Picker's name") + box('Received by', received, "Receiver's name") + '</div>' +
+    (note ? '<span class="pl-note">' + note + '</span>' : '') +
+  '</div>';
+}
+
+function plKitHtml(list, kit, n, of) {
+  const p = kitProduct(kit);
+  const name = p ? p.name : 'Deleted item';
+  const lines = kitLines(list, kit);
+  const done = lines.filter(l => l.picked).length;
+  const kv = (label, val, cls) => val ? '<div class="pl-kv">' + plLabel(label) + '<span class="pl-kv-v' + (cls ? ' ' + cls : '') + '">' + escapeHtml(val) + '</span></div>' : '';
+  return '<section class="pl-card pl-kit">' +
+    '<div class="pl-band"><span>Item ' + n + ' of ' + of + (kit.order_ref ? ' · Order ' + escapeHtml(kit.order_ref) : '') + '</span>' +
+      '<span class="pl-band-r">' + (done ? done + ' of ' + lines.length + ' components picked' : lines.length + ' component' + (lines.length === 1 ? '' : 's')) + '</span></div>' +
+    '<div class="pl-kit-top">' +
+      '<div class="pl-photo">' +
+        (p && p.photo_url ? '<img src="' + escapeHtml(p.photo_url) + '" alt="">' : PL_PHOTO_PH + '<span>No photo</span>') +
+      '</div>' +
+      '<div class="pl-kvs">' +
+        '<div class="pl-kv pl-kv-wide">' + plLabel('Item') + '<span class="pl-kv-v pl-kv-name">' + escapeHtml(name) +
+          (p && p.code ? ' <span class="pl-code">' + escapeHtml(p.code) + '</span>' : '') + '</span></div>' +
+        kv('Order', kit.order_ref, 'pl-kv-link') +
+        kv('Client', kit.client_name, 'pl-kv-plain') +
+        kv('Stored at', p && formatLocs(p.location)) +
+        kv('Place of use', p && p.place_of_use) +
+      '</div>' +
+      '<div class="pl-make">' + plLabel('Complete items') + '<b>' + fmtQty(kit.qty) + '</b></div>' +
+    '</div>' +
+    '<div class="pl-kit-body">' +
+      plNamesHtml(kit.picked_by || list.picked_by, kit.received_by || list.received_by,
+        'Total = qty per item × ' + fmtQty(kit.qty)) +
+      plTableHtml(lines, name) +
+    '</div>' +
+  '</section>';
+}
+
+function plLooseHtml(list, loose, withBand) {
+  const done = loose.filter(l => l.picked).length;
+  return '<section class="pl-card pl-kit">' +
+    (withBand ? '<div class="pl-band"><span>Single items</span><span class="pl-band-r">' + (done ? done + ' of ' + loose.length + ' picked' : loose.length + ' item' + (loose.length === 1 ? '' : 's')) + '</span></div>' : '') +
+    '<div class="pl-kit-body pl-kit-body-top">' +
+      plNamesHtml(list.picked_by, list.received_by, '') +
+      plTableHtml(loose, '') +
+    '</div>' +
+  '</section>';
+}
+
+function pickListHtml(list) {
+  const kits = pickKits(list);
+  const loose = looseLines(list);
+  const small = kits.filter(k => kitLines(list, k).length <= PRINT_OWN_PAGE_PARTS);
+  const big = kits.filter(k => kitLines(list, k).length > PRINT_OWN_PAGE_PARTS);
+  // Numbered in the order they come off the printer, not the order added.
+  const printOrder = small.concat(big);
+  const num0 = (k) => printOrder.indexOf(k) + 1;
+  const kitHtml = (k) => plKitHtml(list, k, num0(k), kits.length);
+
+  const shared =
+    (loose.length ? plLooseHtml(list, loose, kits.length > 0) : '') +
+    small.map(kitHtml).join('');
+
+  // The first page always carries the full header and the orders card. If
+  // it has nothing shared to show, the first large item takes it — alone.
+  const pages = [];
+  const bigQueue = big.slice();
+  pages.push(plHeadHtml(list) + plInfoHtml(list) +
+    (shared || (bigQueue.length ? kitHtml(bigQueue.shift()) : '')));
+  bigQueue.forEach(k => pages.push(plHeadHtml(list, true) + kitHtml(k)));
+
+  return '<div class="pl">' +
+    pages.map((html, i) => '<section class="pl-page' + (i ? ' pl-break' : '') + '">' + html + '</section>').join('') +
+  '</div>';
+}
+
+/* ---- Print preview ----
+   The same page that goes to the printer, shrunk to fit the sheet, so what
+   will come out can be checked before any paper is used. */
+function openPickPrintSheet(listId) {
+  const list = state.pickLists.find(l => l.id === listId);
+  if (!list) return;
+  const html = pickListHtml(list);
+  const pages = (html.match(/class="pl-page/g) || []).length;
+  sheetEl.innerHTML =
+    '<div class="sheet-handle no-print"></div>' +
+    '<div class="sheet-title no-print">Print picking list</div>' +
+    '<div class="sheet-sub no-print">A4 · ' + pages + ' page' + (pages === 1 ? '' : 's') +
+      '. Items with more than ' + PRINT_OWN_PAGE_PARTS + ' parts get a page of their own.</div>' +
+    '<div class="print-area print-area-page pl-preview"><div class="page-scale" id="pageScale">' + html + '</div></div>' +
+    '<div class="sheet-actions no-print">' +
+      '<button class="sheet-cancel" data-back type="button">Back</button>' +
+      '<button class="sheet-save" data-doprint type="button">' + I.print + ' Print</button>' +
+    '</div>';
+  sheetEl.querySelector('[data-back]').addEventListener('click', () => openPickSheet(listId));
+  sheetEl.querySelector('[data-doprint]').addEventListener('click', () => printPickList(list));
+  openSheet();
+  fitPagePreview();
+  // Photos arriving late change the height; fit again once they are in.
+  sheetEl.querySelectorAll('#pageScale img').forEach(img => { if (!img.complete) img.addEventListener('load', fitPagePreview); });
+}
+
+/** Photos have to be in before the print dialog takes its snapshot, or the
+    sheet comes out with empty boxes. Wait for them, but never for long. */
 function printPickList(list) {
   let root = document.getElementById('printRoot');
   if (!root) {
@@ -2110,7 +2553,9 @@ function printPickList(list) {
     document.body.appendChild(root);
   }
   root.innerHTML = pickListHtml(list);
-  window.print();
+  const imgs = Array.from(root.querySelectorAll('img'));
+  const loaded = Promise.all(imgs.map(img => img.complete ? null : new Promise(r => { img.onload = img.onerror = r; })));
+  Promise.race([loaded, new Promise(r => setTimeout(r, 3000))]).then(() => window.print());
 }
 
 /* ===================== LOG screen (movement history) ===================== */
@@ -2647,7 +3092,35 @@ function animateOpacity(el, target, ms) {
     if (p < 1) requestAnimationFrame(frame);
   })(performance.now());
 }
-scrimEl.addEventListener('click', closeSheet);
+/* ---- Leaving the item form by accident ----
+   A tap beside the sheet, a swipe down or Cancel all close it, and on the
+   item form that threw away everything typed. So the form remembers what it
+   looked like when it opened, and leaving asks first if anything changed. */
+let itemDraftSig = '';
+function draftSig(d) {
+  // Numbers as text: a box retyped to the same value comes back as a string.
+  return d ? JSON.stringify(d, (k, v) => (k === 'photoBlob' || k === 'partsQ' || k === 'id_new') ? undefined : (typeof v === 'number' ? String(v) : v)) : '';
+}
+function itemFormDirty() {
+  if (!itemDraft || !sheetEl.classList.contains('open')) return false;
+  // The item form itself, or the cropper it opened for one of its photos.
+  if (!sheetEl.querySelector('[data-photo], [data-cropdone]')) return false;
+  const half = ['lNum', 'lRackNo'].some(id => { const e = $(id); return e && String(e.value || '').trim(); });
+  return half || draftSig(itemDraft) !== itemDraftSig;
+}
+/** Close, unless that would lose unsaved changes and the user says no. */
+function dismissSheet() {
+  if (itemFormDirty() && !confirm('Leave without saving?\n\nThe changes you made to this item will be lost.')) {
+    openSheet();   // a half-swiped sheet springs back
+    return false;
+  }
+  closeSheet();
+  return true;
+}
+scrimEl.addEventListener('click', dismissSheet);
+window.addEventListener('beforeunload', (e) => {
+  if (itemFormDirty()) { e.preventDefault(); e.returnValue = ''; }
+});
 
 /* ---- Swipe a sheet down to dismiss it (phones only) ----
    Only where the sheet is a panel against the bottom edge; on a wide screen
@@ -2694,7 +3167,7 @@ function endSheetDrag(e) {
   if (!active) return;
   // Far enough, or a quick flick: let it go. Otherwise spring back.
   const travelled = dy / sheetEl.offsetHeight * 100;
-  if (travelled > 30 || (dy > 50 && dt < 320)) closeSheet();
+  if (travelled > 30 || (dy > 50 && dt < 320)) dismissSheet();
   else openSheet();
 }
 sheetEl.addEventListener('touchend', endSheetDrag);
@@ -2789,6 +3262,7 @@ function renderProductDetail(p) {
       '<div class="field-row"><span class="fname">Group / type</span><span class="field-val">' + orDash(p.group_name) + ' · ' + orDash(p.category) + '</span></div>' +
       '<div class="field-row"><span class="fname">Cost (budget)</span><span class="field-val">' + orDash(p.cost) + '</span></div>' +
     '</div>' +
+    detailPartsHtml(p) +
     '<button class="link-btn" data-more type="button" style="margin-bottom:6px;">' + (detailMore ? '− Hide' : '+ Show') + ' cost, supplier &amp; pack details</button>' +
     morePanel +
     '<div class="sheet-actions" style="margin-top:0;margin-bottom:14px;">' +
@@ -2816,6 +3290,31 @@ function renderProductDetail(p) {
   sheetEl.querySelector('[data-edit]').addEventListener('click', () => openItemForm(p));
   sheetEl.querySelector('[data-more]').addEventListener('click', () => { detailMore = !detailMore; renderProductDetail(productById(p.id) || p); });
   sheetEl.querySelector('[data-printcard]').addEventListener('click', () => openPrintCardSheet(p));
+  sheetEl.querySelectorAll('[data-openpart]').forEach(b =>
+    b.addEventListener('click', () => openProductDetail(b.getAttribute('data-openpart'))));
+}
+
+/** "Made from" on the item page: each part with its photo and how many go
+    into one, plus how many complete ones the shelf could make right now. */
+function detailPartsHtml(p) {
+  const parts = partsOf(p.id);
+  if (!parts.length) return '';
+  const can = buildableCount(p.id);
+  return '<div class="field-label">Made from ' + parts.length + ' part' + (parts.length === 1 ? '' : 's') +
+      ' <span class="meta-chip ' + (can > 0 ? 'good' : 'warn') + '" style="margin-left:4px;">enough for ' + fmtQty(can) + '</span></div>' +
+    '<div class="group" style="margin-bottom:12px;">' + parts.map(x => {
+      const part = productById(x.part_id);
+      const short = num(part.qty) < num(x.qty);
+      return '<div class="row">' +
+        thumbHtml(part.photo_url, 'thumb part-thumb') +
+        '<div class="row-body" data-openpart="' + escapeHtml(part.id) + '">' +
+          '<div class="row-title">' + escapeHtml(part.name) + '</div>' +
+          '<div class="row-meta"><span class="row-mono">' + escapeHtml(formatLocs(part.location) || 'No location') + '</span>' +
+            '<span' + (short ? ' style="color:var(--sys-orange)"' : '') + '>' + fmtQty(part.qty) + ' ' + escapeHtml(part.unit || 'ea') + ' in stock</span></div>' +
+        '</div>' +
+        '<span class="pick-need">' + fmtQty(x.qty) + '<small>each</small></span>' +
+      '</div>';
+    }).join('') + '</div>';
 }
 
 /* ===================== Printable Kanban card ===================== */
@@ -3565,8 +4064,16 @@ function openItemForm(existing) {
     pack_size_qty: packSize.qty, pack_size_unit: packSize.unit,
     pack_weight_qty: packWeight.qty, pack_weight_unit: packWeight.unit,
     dormant: !!p.dormant,
-    photo_url: p.photo_url || '', photoBlob: null
+    photo_url: p.photo_url || '', photoBlob: null,
+    // What it is made of, and what it was made of when the form opened, so
+    // Save only rewrites the parts list when something actually changed.
+    // A part is either an item already in the catalogue (part_id) or a new
+    // one typed in here (part_id null), which Save creates as an item first.
+    parts: p.id ? partsOf(p.id).map(x => ({ key: x.part_id, part_id: x.part_id, qty: num(x.qty) })) : [],
+    parts0: '', partsQ: ''
   };
+  itemDraft.parts0 = JSON.stringify(partsForSave(itemDraft.parts));
+  itemDraftSig = draftSig(itemDraft);
   renderItemForm();
   openSheet();
 }
@@ -3755,6 +4262,25 @@ function renderItemForm() {
       formFieldHtml('fPlaceUse', 'Place of use', d.place_of_use, { placeholder: 'e.g. Assembly line 2' }) +
     '</div>' +
 
+    // Below the location on purpose: a new part is stored where the finished
+    // item is unless it is given a rack of its own.
+    '<div class="form-section-label">Parts</div>' +
+    '<div class="form-hint">Only if this item is built from loose parts. The photo at the top shows the finished item; ' +
+      'give each part its own photo here and say how many go into one. A picking list then fetches exactly these parts.</div>' +
+    '<div id="partsArea" class="parts-area">' +
+      '<div id="partsList">' + partsEditListHtml(d) + '</div>' +
+      '<div class="parts-add">' +
+        '<button class="parts-add-btn" data-partnew type="button">' + I.plus + ' New part</button>' +
+        '<button class="parts-add-btn" data-partphotos type="button">' + I.camera + ' Parts from photos</button>' +
+      '</div>' +
+      (canDropPhotos() ? '<div class="photo-hint">Drop several part photos here at once, and each becomes a part</div>' : '') +
+      '<div class="search-row" style="background:var(--bg-elevated-2);margin-top:8px;">' +
+        '<span class="search-icon">' + I.search + '</span>' +
+        '<input type="search" id="partsSearch" placeholder="Or use an item already in stock" autocomplete="off">' +
+      '</div>' +
+      '<div id="partsResults"></div>' +
+    '</div>' +
+
     '<div class="form-section-label">Preferred supplier</div>' +
     '<div class="form-card">' +
       formFieldHtml('fPrefSupplier', 'Supplier', d.pref_supplier, { placeholder: 'Supplier name' }) +
@@ -3821,6 +4347,7 @@ function renderItemForm() {
     if (hint) hint.textContent = supplierHintText(d);
   }));
   wireGroupSuggest(d, groups);
+  wirePartsEditor(d);
   sheetEl.querySelectorAll('[data-dormant]').forEach(b => b.addEventListener('click', () => {
     d.dormant = b.getAttribute('data-dormant') === '1';
     sheetEl.querySelectorAll('[data-dormant]').forEach(x => x.classList.toggle('active', (x.getAttribute('data-dormant') === '1') === d.dormant));
@@ -3828,10 +4355,321 @@ function renderItemForm() {
   sheetEl.querySelector('[data-photo]').addEventListener('click', capturePhoto);
   const recropBtn = sheetEl.querySelector('[data-recrop]');
   if (recropBtn) recropBtn.addEventListener('click', recropPhoto);
-  sheetEl.querySelector('[data-close]').addEventListener('click', closeSheet);
+  sheetEl.querySelector('[data-close]').addEventListener('click', dismissSheet);
   sheetEl.querySelector('[data-save]').addEventListener('click', saveItem);
   const del = sheetEl.querySelector('[data-delete]');
   if (del) del.addEventListener('click', deleteItem);
+}
+
+/* ---- Parts editor on the item form ----
+   The item's own photo is the finished thing; each part gets a card with a
+   photo of its own, because the picker goes to fetch the loose parts, not
+   the chair. A part is either an item already in the catalogue or a new one
+   typed in here, which Save creates as an item so it has stock and a rack.
+
+   Rebuilt in place rather than re-rendering the form: that would drop the
+   keyboard and throw the user back to the top of a long sheet. */
+let partKeySeq = 0;
+function newPartKey() { return 'new' + (++partKeySeq); }
+
+/** A blank part, already on the item's own rack: most parts live with the
+    finished item, so usually there is nothing to change. */
+function newPartDraft(d) {
+  const home = parseLoc(firstLoc(d.locs)) || { prefix: '', letter: d.locLetter || 'A', num: '', rack: '' };
+  return { key: newPartKey(), part_id: null, qty: 1, name: '', stock: 0,
+    locPre: home.prefix, locL: home.letter, locN: String(home.num), locR: String(home.rack) };
+}
+
+/** The rack code the picker adds up to, or '' while it is not complete. */
+function partLocCode(x) { return buildLoc(x.locPre, x.locL, x.locN, x.locR); }
+function partLocText(x, homeLoc) {
+  const code = partLocCode(x);
+  if (code) return code;
+  if (String(x.locN || '').trim() || String(x.locR || '').trim()) return 'needs both numbers';
+  return homeLoc ? 'same as item · ' + homeLoc : 'no rack';
+}
+
+/** Laid out like the item's own location picker — site, letter, number,
+    R, number — so a code can only come out in the right shape. */
+function partLocHtml(x, homeLoc) {
+  const k = escapeHtml(x.key);
+  const sites = Array.from(new Set(knownLocPrefixes().concat(x.locPre ? [x.locPre] : []))).sort();
+  return '<div class="part-loc">' +
+    '<div class="part-loc-head"><small>Rack</small><span class="part-loc-code" data-plcode="' + k + '">' + escapeHtml(partLocText(x, homeLoc)) + '</span></div>' +
+    '<div class="part-loc-row">' +
+      '<select data-plpre="' + k + '" aria-label="Site">' +
+        '<option value="">No site</option>' +
+        sites.map(s => '<option' + (s === x.locPre ? ' selected' : '') + '>' + escapeHtml(s) + '</option>').join('') +
+      '</select>' +
+      '<select data-pll="' + k + '" aria-label="Letter">' +
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('').map(c => '<option' + (c === x.locL ? ' selected' : '') + '>' + c + '</option>').join('') +
+      '</select>' +
+      '<input data-pln="' + k + '" type="number" inputmode="numeric" min="1" max="999" placeholder="1" value="' + escapeHtml(x.locN || '') + '" aria-label="Number">' +
+      '<span class="part-loc-r">R</span>' +
+      '<input data-plr="' + k + '" type="number" inputmode="numeric" min="1" max="999" placeholder="1" value="' + escapeHtml(x.locR || '') + '" aria-label="Rack">' +
+    '</div>' +
+  '</div>';
+}
+
+function partsForSave(parts) {
+  return parts.filter(x => x.part_id && num(x.qty) > 0).map(x => ({ part_id: x.part_id, qty: num(x.qty) }));
+}
+
+function partPhotoUrl(x) {
+  if (x.photo_url) return x.photo_url;
+  const p = x.part_id && productById(x.part_id);
+  return (p && p.photo_url) || '';
+}
+
+function partCardHtml(d, x) {
+  const p = x.part_id ? productById(x.part_id) : null;
+  const k = escapeHtml(x.key);
+  const url = partPhotoUrl(x);
+  const homeLoc = formatLocs(d.locs);
+  const photo = '<button class="part-photo' + (url ? '' : ' empty') + '" data-partphoto="' + k + '" type="button" aria-label="Photo of this part">' +
+    (url ? '<img src="' + escapeHtml(url) + '" alt="">' : I.camera + '<span>Photo</span>') + '</button>';
+  const numBox = (label, attr, val, opts) => '<label class="part-num' + (opts && opts.wide ? ' part-num-wide' : '') + '"><small>' + label + '</small>' +
+    '<input ' + attr + '="' + k + '" value="' + escapeHtml(val) + '"' +
+      (opts && opts.text
+        ? ' type="text" autocapitalize="characters" spellcheck="false" placeholder="' + escapeHtml(opts.placeholder || '') + '"'
+        : ' type="number" inputmode="decimal" min="0" step="any" placeholder="0"') + '></label>';
+  return '<div class="part-card" data-pkey="' + k + '">' +
+    photo +
+    '<div class="part-main">' +
+      (p
+        ? '<div class="part-title">' + escapeHtml(p.name) + '</div>' +
+          '<div class="part-meta">' + (p.code ? '<span class="meta-chip code">' + escapeHtml(p.code) + '</span>' : '') +
+            '<span>' + escapeHtml(formatLocs(p.location) || 'No location') + ' · ' + fmtQty(p.qty) + ' in stock</span></div>'
+        : x.part_id
+          ? '<div class="part-title">Deleted item</div>'
+          : '<input class="part-name" type="text" data-partname="' + k + '" value="' + escapeHtml(x.name || '') + '" placeholder="Part name, e.g. Back loop">') +
+      '<div class="part-nums">' +
+        numBox('Per item', 'data-partqty', x.qty) +
+        (x.part_id ? '' : numBox('In stock', 'data-partstock', x.stock)) +
+      '</div>' +
+      (x.part_id ? '' : partLocHtml(x, homeLoc)) +
+    '</div>' +
+    '<button class="part-drop" data-partdrop="' + k + '" type="button" aria-label="Remove part">' + I.trash + '</button>' +
+  '</div>';
+}
+
+function partsEditListHtml(d) {
+  if (!d.parts.length) return '<div class="empty-note">No parts. Leave it like this for an item that is bought or stored as one piece.</div>';
+  const per = d.parts.reduce((s, x) => s + num(x.qty), 0);
+  return d.parts.map(x => partCardHtml(d, x)).join('') +
+    '<div class="parts-sum">' + d.parts.length + ' part' + (d.parts.length === 1 ? '' : 's') + ' · ' + fmtQty(per) + ' pieces for one item</div>';
+}
+
+function partsResultsHtml(d) {
+  const q = String(d.partsQ || '').trim().toLowerCase();
+  if (!q) return '';
+  const matches = state.products
+    .filter(p => p.id !== d.id && !d.parts.some(x => x.part_id === p.id))
+    .filter(p => [p.name, p.code, p.location].some(v => String(v || '').toLowerCase().includes(q)))
+    .slice(0, 8);
+  if (!matches.length) return '<div class="empty-note">Nothing matches that. Use New part to add it.</div>';
+  return '<div class="group" style="margin-top:8px;">' + matches.map(p =>
+    '<div class="row"><div class="row-body" data-partadd="' + escapeHtml(p.id) + '">' +
+      '<div class="row-title">' + escapeHtml(p.name) + '</div>' +
+      '<div class="row-meta">' + escapeHtml(formatLocs(p.location) || 'No location') + ' · ' + fmtQty(p.qty) + ' ' + escapeHtml(p.unit || 'ea') + ' in stock</div>' +
+    '</div><span class="row-trail">' + I.plus + '</span></div>').join('') + '</div>';
+}
+
+/** A photo squared up on white without the cropper, for adding several
+    parts at once. Fits the whole picture in rather than cutting it: a bent
+    back loop is long and thin, and cropping it to a square loses the ends. */
+function squarePhoto(blob) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const side = Math.min(CFG.PHOTO_MAX_PX || 1400, Math.max(img.naturalWidth, img.naturalHeight));
+      const scale = side / Math.max(img.naturalWidth, img.naturalHeight);
+      const w = img.naturalWidth * scale, h = img.naturalHeight * scale;
+      const cv = document.createElement('canvas');
+      cv.width = side; cv.height = side;
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, side, side);
+      ctx.drawImage(img, (side - w) / 2, (side - h) / 2, w, h);
+      URL.revokeObjectURL(url);
+      cv.toBlob(b => resolve(b), 'image/jpeg', CFG.PHOTO_QUALITY || 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+function setPartPhoto(x, blob) {
+  if (x.photoBlob && x.photo_url && x.photo_url.startsWith('blob:')) URL.revokeObjectURL(x.photo_url);
+  x.photoBlob = blob;
+  x.photo_url = URL.createObjectURL(blob);
+}
+
+/** One new part per picture, named later. The first empty name box gets the
+    cursor so typing the names is the obvious next step. */
+async function addPartsFromImages(files) {
+  const d = itemDraft;
+  if (!d || !files.length) return;
+  let added = 0;
+  for (const f of files) {
+    const blob = await squarePhoto(f);
+    if (!blob) continue;
+    const x = newPartDraft(d);
+    setPartPhoto(x, blob);
+    d.parts.push(x);
+    added++;
+  }
+  if (!added) { toast('Those did not come through as pictures', 'bad'); return; }
+  redrawParts();
+  toast(added + ' part' + (added === 1 ? '' : 's') + ' added — give each a name', 'good');
+  const first = sheetEl.querySelector('[data-partname]:placeholder-shown');
+  if (first) { first.scrollIntoView({ block: 'center' }); first.focus(); }
+}
+
+/** The cropper takes over the sheet, so the form is drawn again afterwards;
+    put the user back on the part they were working on. */
+function partPhotoFromFile(key, file) {
+  openCropSheet(file, (blob) => {
+    const x = itemDraft.parts.find(y => y.key === key);
+    if (blob && x) setPartPhoto(x, blob);
+    renderItemForm();
+    const card = sheetEl.querySelector('[data-pkey="' + key + '"]');
+    if (card) card.scrollIntoView({ block: 'center' });
+  });
+}
+
+function pickImageFiles(multiple, onFiles) {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*';
+  if (multiple) input.multiple = true;
+  input.style.cssText = 'position:fixed;left:-9999px;opacity:0;';
+  document.body.appendChild(input);
+  input.addEventListener('change', () => {
+    const files = Array.from(input.files || []);
+    input.remove();
+    if (files.length) onFiles(files);
+  });
+  input.click();
+}
+
+let redrawParts = () => {};
+function wirePartsEditor(d) {
+  const list = $('partsList'), results = $('partsResults'), search = $('partsSearch');
+  if (!list || !results || !search) return;
+  const find = (el, attr) => d.parts.find(y => y.key === el.getAttribute(attr));
+  const drawList = () => {
+    list.innerHTML = partsEditListHtml(d);
+    const sum = list.querySelector('.parts-sum');
+    const fixSum = () => {
+      if (!sum) return;
+      const per = d.parts.reduce((s, x) => s + num(x.qty), 0);
+      sum.textContent = d.parts.length + ' part' + (d.parts.length === 1 ? '' : 's') + ' · ' + fmtQty(per) + ' pieces for one item';
+    };
+    list.querySelectorAll('[data-partqty]').forEach(i => i.addEventListener('input', () => { const x = find(i, 'data-partqty'); if (x) x.qty = i.value; fixSum(); }));
+    list.querySelectorAll('[data-partname]').forEach(i => i.addEventListener('input', () => { const x = find(i, 'data-partname'); if (x) x.name = i.value; }));
+    list.querySelectorAll('[data-partstock]').forEach(i => i.addEventListener('input', () => { const x = find(i, 'data-partstock'); if (x) x.stock = i.value; }));
+    // The rack picker: each box writes its own field, then the code shown
+    // beside the label is rebuilt so a mistake is visible straight away.
+    [['data-plpre', 'locPre'], ['data-pll', 'locL'], ['data-pln', 'locN'], ['data-plr', 'locR']].forEach(([attr, field]) =>
+      list.querySelectorAll('[' + attr + ']').forEach(i => {
+        const ev = i.tagName === 'SELECT' ? 'change' : 'input';
+        i.addEventListener(ev, () => {
+          const x = find(i, attr);
+          if (!x) return;
+          x[field] = i.value;
+          const out = list.querySelector('[data-plcode="' + x.key + '"]');
+          if (out) out.textContent = partLocText(x, formatLocs(d.locs));
+        });
+      }));
+    list.querySelectorAll('[data-partphoto]').forEach(b => b.addEventListener('click', () => {
+      const key = b.getAttribute('data-partphoto');
+      pickImageFiles(false, files => partPhotoFromFile(key, files[0]));
+    }));
+    list.querySelectorAll('[data-partdrop]').forEach(b => b.addEventListener('click', () => {
+      const x = find(b, 'data-partdrop');
+      if (x && !x.part_id && (x.name || x.photoBlob) && !confirm('Remove this part?')) return;
+      d.parts = d.parts.filter(y => y !== x);
+      drawList(); drawResults();
+    }));
+  };
+  const drawResults = () => {
+    results.innerHTML = partsResultsHtml(d);
+    results.querySelectorAll('[data-partadd]').forEach(b => b.addEventListener('click', () => {
+      const id = b.getAttribute('data-partadd');
+      d.parts.push({ key: id, part_id: id, qty: 1 });
+      d.partsQ = ''; search.value = '';
+      drawList(); drawResults();
+    }));
+  };
+  redrawParts = () => { drawList(); drawResults(); };
+  search.addEventListener('input', () => { d.partsQ = search.value; drawResults(); });
+  sheetEl.querySelector('[data-partnew]').addEventListener('click', () => {
+    const x = newPartDraft(d);
+    d.parts.push(x);
+    drawList();
+    const inp = list.querySelector('[data-partname="' + x.key + '"]');
+    if (inp) { inp.scrollIntoView({ block: 'center' }); inp.focus(); }
+  });
+  sheetEl.querySelector('[data-partphotos]').addEventListener('click', () => pickImageFiles(true, addPartsFromImages));
+  drawList();
+}
+
+/** Checks the new parts before anything is written, so a half-filled card
+    cannot leave the item saved and the parts not. */
+function checkNewParts(d) {
+  for (const x of d.parts) {
+    if (x.part_id) continue;
+    const card = sheetEl.querySelector('[data-pkey="' + x.key + '"]');
+    if (!String(x.name || '').trim()) {
+      const i = card && card.querySelector('[data-partname]');
+      if (i) { i.scrollIntoView({ block: 'center' }); i.focus(); }
+      return 'Give each part a name';
+    }
+    if (!(num(x.qty) > 0)) {
+      const i = card && card.querySelector('[data-partqty]');
+      if (i) { i.scrollIntoView({ block: 'center' }); i.focus(); }
+      return 'Say how many of "' + x.name.trim() + '" go into one item';
+    }
+    // One number without the other is a half-typed rack, not "same as item".
+    if (!!String(x.locN || '').trim() !== !!String(x.locR || '').trim()) {
+      const i = card && card.querySelector(String(x.locN || '').trim() ? '[data-plr]' : '[data-pln]');
+      if (i) { i.scrollIntoView({ block: 'center' }); i.focus(); }
+      return 'Give "' + x.name.trim() + '" both rack numbers, or clear them to use the item\'s rack';
+    }
+  }
+  return '';
+}
+
+/** Turns each new part into an item, and stores any new photo for a part
+    that was already one. Stops at the first failure and says which. */
+async function saveNewParts(d, btn) {
+  const fresh = d.parts.filter(x => !x.part_id);
+  let n = 0;
+  for (const x of d.parts) {
+    if (x.part_id && x.photoBlob) {
+      btn.textContent = 'Uploading part photos…';
+      const url = await DB.uploadPhoto(x.photoBlob, x.part_id);
+      await DB.updateProduct(x.part_id, { photo_url: url });
+      x.photoBlob = null;
+    }
+  }
+  for (const x of fresh) {
+    n++;
+    btn.textContent = 'Adding part ' + n + ' of ' + fresh.length + '…';
+    let photoUrl = null;
+    if (x.photoBlob) photoUrl = await DB.uploadPhoto(x.photoBlob);
+    const created = await DB.createProduct({
+      name: x.name.trim(), code: '', notes: 'Part of ' + d.name,
+      category: 'Parts', group_name: (d.group_name || '').trim() || null,
+      unit: 'ea', qty: num(x.stock), min_qty: 0,
+      location: partLocCode(x) || formatLocs(d.locs) || null,
+      client_id: d.client_id || null,
+      photo_url: photoUrl, __person: state.me
+    });
+    if (!created || !created.id) throw new Error('"' + x.name.trim() + '" was not added');
+    x.part_id = created.id;
+    x.photoBlob = null;
+  }
 }
 
 /* The groups already in use, offered under the Group box. These were styled
@@ -4539,12 +5377,19 @@ document.addEventListener('drop', (e) => {
   // A DataTransfer is only readable while the event is being handled, so
   // take what is needed off it before anything is awaited.
   const file = imageFromTransfer(e.dataTransfer);
+  const files = imagesFromTransfer(e.dataTransfer);
   const url = (e.dataTransfer.getData('text/uri-list') || '').split('\n')[0].trim();
 
   if (!itemFormOpen()) {
     toast('Open an item first, then drop the photo onto it');
     return;
   }
+  // Onto one part: that part's photo. Anywhere else in the parts section:
+  // a new part for every picture. Otherwise it is the item's own photo.
+  const onPart = e.target && e.target.closest && e.target.closest('[data-pkey]');
+  const onParts = e.target && e.target.closest && e.target.closest('#partsArea');
+  if (onPart && file) { partPhotoFromFile(onPart.getAttribute('data-pkey'), file); return; }
+  if (onParts && files.length) { addPartsFromImages(files); return; }
   if (file) { photoFromOutside(file); return; }
   if (!url) { toast('That did not come through as a picture', 'bad'); return; }
 
@@ -4562,8 +5407,23 @@ document.addEventListener('paste', (e) => {
   // field, which must be left alone.
   if (!file) return;
   e.preventDefault();
+  // Pasting while working on a part gives that part the picture.
+  const a = document.activeElement;
+  const onPart = a && a.closest && a.closest('[data-pkey]');
+  if (onPart) { partPhotoFromFile(onPart.getAttribute('data-pkey'), file); return; }
+  if (a && a.closest && a.closest('#partsArea')) { addPartsFromImages([file]); return; }
   photoFromOutside(file);
 });
+
+/** Every image in a drop, for adding several parts in one go. */
+function imagesFromTransfer(dt) {
+  const out = [];
+  const files = (dt && dt.files) || [];
+  for (let i = 0; i < files.length; i++) {
+    if (files[i].type && files[i].type.indexOf('image/') === 0) out.push(files[i]);
+  }
+  return out;
+}
 
 async function saveItem() {
   const d = itemDraft;
@@ -4571,6 +5431,10 @@ async function saveItem() {
   d.name = ($('fName').value || '').trim();
   if (!d.name) { $('fName').focus(); toast('Give it a name first'); return; }
   if (num(d.qty) < 0) { $('fQty').focus(); toast('The count cannot be less than zero'); return; }
+  const partProblem = checkNewParts(d);
+  if (partProblem) { toast(partProblem); return; }
+  // A new item that has parts is an assembled one, unless someone chose otherwise.
+  if (!d.id && d.parts.length && d.category === 'Parts') d.category = 'Assembled';
 
   const btn = sheetEl.querySelector('[data-save]');
   btn.disabled = true; btn.textContent = 'Saving…';
@@ -4621,7 +5485,31 @@ async function saveItem() {
     } else {
       payload.qty = num(d.qty);
       payload.__person = state.me;
-      await DB.createProduct(payload);
+      const created = await DB.createProduct(payload);
+      if (created && created.id) d.id_new = created.id;
+    }
+    const savedId = d.id || d.id_new;
+    const partsChanged = () => JSON.stringify(partsForSave(d.parts)) !== d.parts0;
+    if (savedId && (partsChanged() || d.parts.some(x => !x.part_id || x.photoBlob))) {
+      btn.textContent = 'Saving parts…';
+      try {
+        // Make sure the parts table is there before creating any new part,
+        // or they would be added as items with nothing linking them here.
+        if (d.parts.some(x => !x.part_id)) await DB.listProductParts();
+        let failed = null;
+        try { await saveNewParts(d, btn); } catch (e) { failed = e; }
+        // Link whatever was made, even if a later part failed, so a retry
+        // does not create the same part twice.
+        if (partsChanged()) await DB.setProductParts(savedId, partsForSave(d.parts));
+        if (failed) throw failed;
+      }
+      catch (e) {
+        // The item itself is saved; only the parts list is not. Say exactly
+        // that rather than "could not save", which would invite a duplicate.
+        closeSheet(); await refresh();
+        toast('Item saved, but its parts were not: ' + (e.message || 'try again'), 'bad');
+        return;
+      }
     }
     closeSheet();
     await refresh();

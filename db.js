@@ -106,7 +106,8 @@
      ========================================================= */
   const Local = {
     mode: 'local',
-    cache: { products: [], movements: [], people: [], reorder_cards: [], pick_lists: [], pick_list_items: [] },
+    cache: { products: [], movements: [], people: [], reorder_cards: [], pick_lists: [], pick_list_items: [],
+             product_parts: [], pick_list_kits: [] },
     ready: null,
 
     /* Load all four keys, then assign in one go. Reading them one await at a
@@ -116,10 +117,13 @@
     init() {
       if (!this.ready) {
         this.ready = (async () => {
-          const [products, movements, people, cards, lists, lines] = await Promise.all([
+          const [products, movements, people, cards, lists, lines, parts, kits] = await Promise.all([
             kvGet('local:products'), kvGet('local:movements'), kvGet('local:people'), kvGet('local:reorder_cards'),
-            kvGet('local:pick_lists'), kvGet('local:pick_list_items')
+            kvGet('local:pick_lists'), kvGet('local:pick_list_items'),
+            kvGet('local:product_parts'), kvGet('local:pick_list_kits')
           ]);
+          this.cache.product_parts   = parts     || [];
+          this.cache.pick_list_kits  = kits      || [];
           this.cache.products        = products  || [];
           this.cache.movements       = movements || [];
           this.cache.people          = people    || [];
@@ -279,6 +283,7 @@
       await this.init();
       return this.cache.pick_lists
         .map(l => Object.assign({}, l, {
+          pick_list_kits: this.cache.pick_list_kits.filter(k => k.list_id === l.id),
           pick_list_items: this.cache.pick_list_items
             .filter(i => i.list_id === l.id)
             .map(i => {
@@ -309,15 +314,18 @@
       await this.init();
       this.cache.pick_lists = this.cache.pick_lists.filter(x => x.id !== id);
       this.cache.pick_list_items = this.cache.pick_list_items.filter(x => x.list_id !== id);
+      this.cache.pick_list_kits = this.cache.pick_list_kits.filter(x => x.list_id !== id);
       await this.persist('pick_lists');
       await this.persist('pick_list_items');
+      await this.persist('pick_list_kits');
       return true;
     },
     async addPickItems(listId, lines) {
       await this.init();
       const out = lines.map(l => ({
         id: uuid(), list_id: listId, product_id: l.product_id,
-        qty: Number(l.qty) || 0, picked: false, created_at: nowIso()
+        qty: Number(l.qty) || 0, picked: false, received: false, created_at: nowIso(),
+        kit_id: l.kit_id || null, per_unit: l.per_unit != null ? Number(l.per_unit) : null
       }));
       this.cache.pick_list_items = this.cache.pick_list_items.concat(out);
       await this.persist('pick_list_items');
@@ -335,6 +343,49 @@
       await this.init();
       this.cache.pick_list_items = this.cache.pick_list_items.filter(x => x.id !== id);
       await this.persist('pick_list_items');
+      return true;
+    },
+
+    /* ---- Assembled items on a picking list ---- */
+    async createPickKit(row) {
+      await this.init();
+      const out = Object.assign({ id: uuid(), created_at: nowIso(), sort: 0 }, row);
+      this.cache.pick_list_kits.push(out);
+      await this.persist('pick_list_kits');
+      return out;
+    },
+    async updatePickKit(id, patch) {
+      await this.init();
+      const row = this.cache.pick_list_kits.find(x => x.id === id);
+      if (!row) throw new Error('Item not found on the list');
+      Object.assign(row, patch);
+      await this.persist('pick_list_kits');
+      return row;
+    },
+    async removePickKit(id) {
+      await this.init();
+      this.cache.pick_list_kits = this.cache.pick_list_kits.filter(x => x.id !== id);
+      this.cache.pick_list_items = this.cache.pick_list_items.filter(x => x.kit_id !== id);
+      await this.persist('pick_list_kits');
+      await this.persist('pick_list_items');
+      return true;
+    },
+
+    /* ---- Parts lists ---- */
+    async listProductParts() {
+      await this.init();
+      return this.cache.product_parts.slice();
+    },
+    /** Replace an item's whole parts list in one go. */
+    async setProductParts(productId, parts) {
+      await this.init();
+      this.cache.product_parts = this.cache.product_parts
+        .filter(x => x.product_id !== productId)
+        .concat(parts.map((x, i) => ({
+          id: uuid(), product_id: productId, part_id: x.part_id,
+          qty: Number(x.qty) || 1, sort: i, created_at: nowIso()
+        })));
+      await this.persist('product_parts');
       return true;
     }
   };
@@ -484,7 +535,50 @@
        The lines come back with their product embedded, so a printed list can
        show the name and the rack without a second round trip. */
     async listPickLists() {
-      return await this.rest('pick_lists?select=*,pick_list_items(*,products(name,unit,location,code,photo_url))&order=created_at.desc&limit=120');
+      const lines = 'pick_list_items(*,products(name,unit,location,code,photo_url))';
+      try {
+        return await this.rest('pick_lists?select=*,pick_list_kits(*),' + lines + '&order=created_at.desc&limit=120');
+      } catch (e) {
+        // Until schema-assemblies.sql has been run there is no kits table,
+        // and asking for it fails the whole query. Fall back to the lists as
+        // they were rather than showing none at all.
+        if (e && e.offline) throw e;
+        return await this.rest('pick_lists?select=*,' + lines + '&order=created_at.desc&limit=120');
+      }
+    },
+    async createPickKit(row) {
+      const rows = await this.rest('pick_list_kits', {
+        method: 'POST', body: row, headers: { 'Prefer': 'return=representation' }
+      });
+      return rows[0];
+    },
+    async updatePickKit(id, patch) {
+      await this.rest('pick_list_kits?id=eq.' + id, { method: 'PATCH', body: patch });
+    },
+    async removePickKit(id) {
+      // Its part lines go with it (on delete cascade).
+      await this.rest('pick_list_kits?id=eq.' + id, { method: 'DELETE' });
+    },
+
+    /* ---- Parts lists ---- */
+    async listProductParts() {
+      return await this.rest('product_parts?select=*&order=sort.asc');
+    },
+    /** Replace an item's parts list. Upsert first, then drop whatever is no
+        longer on it, so a failure halfway never leaves the item with no
+        parts at all. */
+    async setProductParts(productId, parts) {
+      const keep = parts.map(x => x.part_id);
+      if (parts.length) {
+        await this.rest('product_parts?on_conflict=product_id,part_id', {
+          method: 'POST',
+          body: parts.map((x, i) => ({ product_id: productId, part_id: x.part_id, qty: Number(x.qty) || 1, sort: i })),
+          headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' }
+        });
+      }
+      await this.rest('product_parts?product_id=eq.' + productId +
+        (keep.length ? '&part_id=not.in.(' + keep.join(',') + ')' : ''), { method: 'DELETE' });
+      return true;
     },
     async createPickList(row) {
       const rows = await this.rest('pick_lists', {
@@ -500,7 +594,13 @@
     },
     async addPickItems(listId, lines) {
       if (!lines.length) return [];
-      const body = lines.map(l => ({ list_id: listId, product_id: l.product_id, qty: Number(l.qty) || 0 }));
+      // kit_id and per_unit only go in when there is something to say: a
+      // plain line must still save on a database without the new columns.
+      const body = lines.map(l => {
+        const row = { list_id: listId, product_id: l.product_id, qty: Number(l.qty) || 0 };
+        if (l.kit_id) { row.kit_id = l.kit_id; row.per_unit = Number(l.per_unit) || 0; }
+        return row;
+      });
       return await this.rest('pick_list_items', {
         method: 'POST', body: body, headers: { 'Prefer': 'return=representation' }
       });
@@ -861,6 +961,11 @@
     addPickItems(id, lines)    { return this._write(() => impl.addPickItems(id, lines)); },
     updatePickItem(id, p)      { return this._write(() => impl.updatePickItem(id, p)); },
     removePickItem(id)         { return this._write(() => impl.removePickItem(id)); },
+    createPickKit(row)         { return this._write(() => impl.createPickKit(row)); },
+    updatePickKit(id, p)       { return this._write(() => impl.updatePickKit(id, p)); },
+    removePickKit(id)          { return this._write(() => impl.removePickKit(id)); },
+    listProductParts()         { return this._read('product_parts', () => impl.listProductParts()); },
+    setProductParts(id, parts) { return this._write(() => impl.setProductParts(id, parts)); },
     deleteReorderCard(id)      { return this._write(() => impl.deleteReorderCard(id)); },
 
     /* A supplier reads two views rather than the tables behind them. A policy
